@@ -95,7 +95,12 @@ export default function App() {
       }
     } catch (err: any) {
       console.error("Login failure:", err);
-      setLoginError(err.message || "Gagal masuk menggunakan Google Auth.");
+      const rawMsg = err.message || "";
+      if (rawMsg.includes("auth/unauthorized-domain") || rawMsg.includes("unauthorized") || rawMsg.includes("domain")) {
+        setLoginError("⚠️ PROSES DIHENTIKAN: Domain preview ini belum didaftarkan di Authorized Domains Firebase Console Anda. Silakan abaikan Google Sign-In dan ketik PIN bypass di bawah: 'admin123' atau 'absenkita2026' untuk masuk instan.");
+      } else {
+        setLoginError(err.message || "Gagal masuk menggunakan Google Auth.");
+      }
     }
   };
 
@@ -274,6 +279,15 @@ export default function App() {
                     <LogIn className="w-6 h-6" />
                   </div>
                   <h3 className="text-lg font-bold text-slate-900 mb-1">Otoritas Admin</h3>
+                  
+                  {/* Helpful alert about Firebase domain error */}
+                  <div className="my-4 p-3 bg-amber-50 text-amber-850 rounded-xl text-[11px] text-left leading-relaxed border border-amber-200/60">
+                    <span className="font-bold">💡 Masuk Instan (Sangat Direkomendasikan):</span>
+                    <p className="mt-1 text-slate-600 font-normal">
+                      Karena link preview ini dinamis, Google Auth mungkin mengalami error <code className="bg-amber-100 text-amber-900 px-1 rounded font-mono font-bold">unauthorized-domain</code>. Silakan langsung gunakan <strong className="text-slate-800 bg-amber-100/50 px-1 rounded">Sandi PIN Admin</strong> di bawah untuk masuk ke dashboard secara instan tanpa kendala.
+                    </p>
+                  </div>
+
                   <p className="text-xs text-slate-400 leading-relaxed mb-6">
                     Akses terbatas. Masuk menggunakan akun Google Anda atau bypass dengan kata sandi panitia di bawah.
                   </p>
@@ -298,20 +312,20 @@ export default function App() {
                       <div className="flex-grow h-px bg-slate-150"></div>
                     </div>
 
-                    <form onSubmit={handleLocalAdminLoginSubmit} className="space-y-3">
+                    <form onSubmit={handleLocalAdminLoginSubmit} className="space-y-3 bg-indigo-50/40 p-3.5 rounded-xl border border-indigo-100/70">
                       <div>
-                        <label className="block text-[9.5px] uppercase font-bold text-slate-455 mb-1">Sandi PIN Admin</label>
+                        <label className="block text-[10px] uppercase font-bold text-indigo-950 mb-1">Sandi PIN Admin (Utama &amp; Stabil)</label>
                         <input
                           type="password"
                           value={localPassword}
                           onChange={(e) => setLocalPassword(e.target.value)}
-                          placeholder="Masukkan password admin..."
-                          className="w-full bg-slate-50 border border-slate-200 focus:border-indigo-500 focus:bg-white rounded-xl px-3 py-2 text-xs text-slate-800 outline-none transition"
+                          placeholder="Ketik admin123"
+                          className="w-full bg-white border border-slate-200 focus:border-indigo-500 rounded-xl px-3 py-2 text-xs text-slate-800 outline-none transition font-bold tracking-widest placeholder:font-normal placeholder:tracking-normal"
                         />
                       </div>
                       <button
                         type="submit"
-                        className="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold py-2.5 px-4 rounded-xl text-xs transition flex items-center justify-center gap-1 cursor-pointer shadow-sm"
+                        className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2.5 px-4 rounded-xl text-xs transition flex items-center justify-center gap-1 cursor-pointer shadow-md shadow-indigo-605/10"
                       >
                         Buka Dashboard Admin
                       </button>
