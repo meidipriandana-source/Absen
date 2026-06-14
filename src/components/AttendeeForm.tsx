@@ -153,7 +153,7 @@ export default function AttendeeForm({ onSuccess, sessionActive }: AttendeeFormP
 
       <div className="p-6 md:p-8 space-y-5">
         {errorMessage && (
-          <div className="p-4 bg-rose-50 border border-rose-100 rounded-xl flex items-start gap-2.5 text-rose-705 text-xs font-semibold">
+          <div className="p-4 bg-rose-50 border border-rose-100 rounded-xl flex items-start gap-2.5 text-rose-700 text-xs font-semibold">
             <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5 text-rose-500" />
             <span>{errorMessage}</span>
           </div>
@@ -169,7 +169,7 @@ export default function AttendeeForm({ onSuccess, sessionActive }: AttendeeFormP
               </label>
               <div className="relative">
                 <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
-                  <User className="w-4 h-4 text-indigo-505" />
+                  <User className="w-4 h-4 text-indigo-600" />
                 </div>
                 <input
                   type="text"
@@ -189,7 +189,7 @@ export default function AttendeeForm({ onSuccess, sessionActive }: AttendeeFormP
               </label>
               <div className="relative">
                 <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
-                  <School className="w-4 h-4 text-indigo-505" />
+                  <School className="w-4 h-4 text-indigo-600" />
                 </div>
                 <input
                   type="text"
@@ -209,7 +209,7 @@ export default function AttendeeForm({ onSuccess, sessionActive }: AttendeeFormP
               </label>
               <div className="relative">
                 <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
-                  <Hash className="w-4 h-4 text-indigo-505" />
+                  <Hash className="w-4 h-4 text-indigo-600" />
                 </div>
                 <input
                   type="text"
@@ -229,7 +229,7 @@ export default function AttendeeForm({ onSuccess, sessionActive }: AttendeeFormP
               </label>
               <div className="relative">
                 <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
-                  <Briefcase className="w-4 h-4 text-indigo-505" />
+                  <Briefcase className="w-4 h-4 text-indigo-600" />
                 </div>
                 <input
                   type="text"
@@ -249,7 +249,7 @@ export default function AttendeeForm({ onSuccess, sessionActive }: AttendeeFormP
               </label>
               <div className="relative">
                 <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
-                  <Mail className="w-4 h-4 text-indigo-505" />
+                  <Mail className="w-4 h-4 text-indigo-600" />
                 </div>
                 <input
                   type="email"
@@ -270,7 +270,7 @@ export default function AttendeeForm({ onSuccess, sessionActive }: AttendeeFormP
           <button
             type="submit"
             disabled={isSubmitting}
-            className="w-full mt-6 bg-indigo-650 hover:bg-indigo-700 active:scale-[99] text-white font-bold py-3.5 px-5 rounded-2xl text-xs sm:text-sm transition-all focus:ring-4 focus:ring-indigo-100 flex items-center justify-center gap-2 cursor-pointer disabled:bg-slate-300 disabled:cursor-not-allowed shadow-md shadow-indigo-600/10"
+            className="w-full mt-6 bg-indigo-600 hover:bg-indigo-700 active:scale-[99] text-white font-bold py-3.5 px-5 rounded-2xl text-xs sm:text-sm transition-all focus:ring-4 focus:ring-indigo-100 flex items-center justify-center gap-2 cursor-pointer disabled:bg-slate-300 disabled:cursor-not-allowed shadow-md shadow-indigo-600/10"
           >
             {isSubmitting ? (
               <>

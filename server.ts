@@ -138,10 +138,19 @@ app.post("/api/save-token", (req, res) => {
   res.json({ status: "success", message: "Admin session registered on server." });
 });
 
-// Admin logs in via local PIN/Password fallback bypass
+// Admin logs in via local Username & Password fallback bypass
 app.post("/api/admin/local-login", (req, res) => {
-  const { password } = req.body;
-  if (password === "admin" || password === "admin123" || password === "absenkita2026") {
+  const { username, password } = req.body;
+  
+  const userText = (username || "").trim().toLowerCase();
+  const passText = (password || "").trim();
+
+  if (!userText || !passText) {
+    return res.status(400).json({ error: "Username dan Password harus diisi." });
+  }
+
+  // Accept user "admin" with valid passwords
+  if (userText === "admin" && (passText === "admin" || passText === "admin123" || passText === "absenkita2026")) {
     const current = loadSession() || {
       accessToken: null,
       savedAt: Date.now(),
@@ -159,7 +168,7 @@ app.post("/api/admin/local-login", (req, res) => {
       session: loadSession()
     });
   } else {
-    return res.status(401).json({ error: "Password atau PIN salah. Anda bisa menggunakan PIN default: 'admin123' atau 'absenkita2026'." });
+    return res.status(401).json({ error: "Username atau Password salah. Gunakan Username: admin, Password: admin123" });
   }
 });
 
@@ -355,10 +364,13 @@ app.post("/api/submit-attendance", async (req, res) => {
   try {
     const list = loadLocalAttendees();
     
-    // Check duplication based on NIP
-    const alreadyRegistered = list.some(a => a.nip === nip);
+    // Check duplication based on both NIP and Name to allow multiple dummy/unfilled NIP submissions with different names
+    const alreadyRegistered = list.some(
+      a => a.nip.trim().toLowerCase() === nip.trim().toLowerCase() && 
+           a.name.trim().toLowerCase() === name.trim().toLowerCase()
+    );
     if (alreadyRegistered) {
-      return res.status(400).json({ error: `NIP ${nip} sudah terdaftar. Anda tidak perlu mengirim absen berulang kali.` });
+      return res.status(400).json({ error: `Peserta dengan nama "${name}" dan NIP "${nip}" sudah terdaftar.` });
     }
 
     const now = new Date();

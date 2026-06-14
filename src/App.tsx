@@ -28,6 +28,7 @@ export default function App() {
     return null;
   });
   const [isPublicSessionActive, setIsPublicSessionActive] = useState(false);
+  const [localUsername, setLocalUsername] = useState("admin");
   const [localPassword, setLocalPassword] = useState("");
   const [loginError, setLoginError] = useState<string | null>(null);
 
@@ -107,8 +108,12 @@ export default function App() {
   // Handle Local Admin Password sign-in bypass
   const handleLocalAdminLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!localUsername.trim()) {
+      setLoginError("Silakan masukkan Username Admin.");
+      return;
+    }
     if (!localPassword.trim()) {
-      setLoginError("Silakan masukkan kata sandi Admin.");
+      setLoginError("Silakan masukkan password Admin.");
       return;
     }
 
@@ -117,7 +122,7 @@ export default function App() {
       const res = await fetch("/api/admin/local-login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ password: localPassword })
+        body: JSON.stringify({ username: localUsername, password: localPassword })
       });
       const data = await res.json();
       if (res.ok && data.success) {
@@ -128,20 +133,21 @@ export default function App() {
         setLocalPassword("");
         setViewMode("admin");
       } else {
-        setLoginError(data.error || "Sandi PIN yang dimasukkan tidak cocok.");
+        setLoginError(data.error || "Username atau password salah.");
       }
     } catch (err) {
-      console.error("Local password auth error:", err);
+      console.error("Local login auth error:", err);
       setLoginError("Koneksi server gagal.");
     }
   };
 
   // Handle Admin Log-Out
   const handleAdminLogout = async () => {
-    const confirmLogout = window.confirm("Apakah Anda yakin ingin keluar dari akun Admin?");
-    if (!confirmLogout) return;
-    
-    await logout();
+    try {
+      await logout();
+    } catch (err) {
+      console.error("Logout error:", err);
+    }
     localStorage.removeItem("admin_local_logged_in");
     setIsAdminLoggedIn(false);
     setAdminUser(null);
@@ -299,33 +305,32 @@ export default function App() {
                   )}
 
                   <div className="space-y-4 text-left">
-                    <button
-                      onClick={handleAdminLogin}
-                      className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-4 rounded-xl text-xs transition flex items-center justify-center gap-1.5 shadow-md shadow-indigo-600/15 cursor-pointer"
-                    >
-                      Masuk dengan Akun Google
-                    </button>
-
-                    <div className="flex items-center gap-3 my-4 text-slate-300">
-                      <div className="flex-grow h-px bg-slate-150"></div>
-                      <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Atau Sandi Lokal</span>
-                      <div className="flex-grow h-px bg-slate-150"></div>
-                    </div>
-
-                    <form onSubmit={handleLocalAdminLoginSubmit} className="space-y-3 bg-indigo-50/40 p-3.5 rounded-xl border border-indigo-100/70">
+                    <form onSubmit={handleLocalAdminLoginSubmit} className="space-y-4 bg-indigo-50/40 p-3.5 rounded-xl border border-indigo-100/70">
                       <div>
-                        <label className="block text-[10px] uppercase font-bold text-indigo-950 mb-1">Sandi PIN Admin (Utama &amp; Stabil)</label>
+                        <label className="block text-[10px] uppercase font-bold text-indigo-950 mb-1">Username Admin</label>
+                        <input
+                          type="text"
+                          value={localUsername}
+                          onChange={(e) => setLocalUsername(e.target.value)}
+                          placeholder="Masukkan username admin..."
+                          className="w-full bg-white border border-slate-200 focus:border-indigo-500 rounded-xl px-3 py-2 text-xs text-slate-800 outline-none transition font-medium"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-[10px] uppercase font-bold text-indigo-950 mb-1">Password Admin</label>
                         <input
                           type="password"
                           value={localPassword}
                           onChange={(e) => setLocalPassword(e.target.value)}
-                          placeholder="Ketik admin123"
-                          className="w-full bg-white border border-slate-200 focus:border-indigo-500 rounded-xl px-3 py-2 text-xs text-slate-800 outline-none transition font-bold tracking-widest placeholder:font-normal placeholder:tracking-normal"
+                          placeholder="Masukkan password admin..."
+                          className="w-full bg-white border border-slate-200 focus:border-indigo-500 rounded-xl px-3 py-2 text-xs text-slate-800 outline-none transition"
                         />
                       </div>
+
                       <button
                         type="submit"
-                        className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2.5 px-4 rounded-xl text-xs transition flex items-center justify-center gap-1 cursor-pointer shadow-md shadow-indigo-605/10"
+                        className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2.5 px-4 rounded-xl text-xs transition flex items-center justify-center gap-1 cursor-pointer shadow-md shadow-indigo-600/10"
                       >
                         Buka Dashboard Admin
                       </button>
@@ -333,29 +338,14 @@ export default function App() {
 
                     <div className="bg-slate-50 border border-slate-150/70 p-3 rounded-xl text-center">
                       <p className="text-[10px] text-slate-500 leading-normal">
-                        PIN Default: <code className="bg-slate-200 px-1 py-0.5 rounded font-mono font-bold text-slate-700">admin123</code> atau <code className="bg-slate-200 px-1 py-0.5 rounded font-mono font-bold text-slate-700">absenkita2026</code>
+                        Kunci Akses Default:<br />
+                        Username: <code className="bg-slate-200 px-1 py-0.5 rounded font-mono font-bold text-slate-700">admin</code><br />
+                        Password: <code className="bg-slate-200 px-1 py-0.5 rounded font-mono font-bold text-slate-700">admin123</code>
                       </p>
                     </div>
                   </div>
 
-                  {/* High fidelity Smartphone WebView & Popup helper tips */}
-                  <div className="mt-6 text-left p-4 bg-amber-50/70 border border-amber-100 rounded-2xl space-y-2">
-                    <h4 className="text-[11px] font-bold text-amber-800 flex items-center gap-1.5">
-                      <Sparkles className="w-3.5 h-3.5 text-amber-600 animate-pulse" />
-                      Tips Akses HP / Smartphone:
-                    </h4>
-                    <p className="text-[10px] text-slate-600 leading-relaxed">
-                      Sistem login Google Workspace memerlukan pemuatan jendela baru (redirect/popup). Jika login tidak merespon di HP Anda:
-                    </p>
-                    <ol className="list-decimal list-inside text-[9.5px] text-slate-500 space-y-1 leading-relaxed pl-1">
-                      <li>
-                        Jangan membukanya langsung dari dalam aplikasi chat seperti <strong>WhatsApp atau Telegram</strong> (In-App WebView biasanya memblokir autentikasi eksternal).
-                      </li>
-                      <li>
-                        Ketuk ikon <strong>tiga titik</strong> di pojok kanan atas layar HP Anda, lalu pilih <strong>&quot;Buka di Browser&quot;</strong> atau <strong>&quot;Buka di Safari/Chrome&quot;</strong>.
-                      </li>
-                    </ol>
-                  </div>
+
                 </div>
               )}
             </motion.div>
