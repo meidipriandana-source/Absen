@@ -109,77 +109,28 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
     }
   };
 
-  // 2. Load Attendee list from Google Sheets
+  // 2. Load Attendee list from local Express backend
   const fetchAttendeesFromSheets = async () => {
-    if (!accessToken) return;
     setIsLoading(true);
     setHasAccessError(false);
     try {
-      // Step A: Load Spreadsheet Metadata to resolve sheet title of first tab dynamically
-      const metaRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}`, {
-        headers: { Authorization: `Bearer ${accessToken}` },
-      });
-
-      if (!metaRes.ok) {
-        if (metaRes.status === 403 || metaRes.status === 404) {
-          setHasAccessError(true);
-        }
-        throw new Error("Gagal mengambil metadata Google Sheets. Periksa koneksi/autentikasi.");
+      const res = await fetch("/api/attendees");
+      if (!res.ok) {
+        throw new Error("Gagal mengambil data dari server lokal.");
       }
-
-      const meta = await metaRes.json();
-      const sheets = meta.sheets || [];
-      if (sheets.length === 0) {
-        throw new Error("Spreadsheet tidak memiliki tab.");
-      }
-      const firstTabName = sheets[0].properties.title;
-
-      // Step B: Load values from the sheet
-      const valRes = await fetch(
-        `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(firstTabName)}!A1:H500`,
-        {
-          headers: { Authorization: `Bearer ${accessToken}` },
-        }
-      );
-
-      if (!valRes.ok) {
-        throw new Error("Gagal mengambil baris data Google Sheets.");
-      }
-
-      const valData = await valRes.json();
-      const rows = valData.values || [];
-
-      if (rows.length <= 1) {
-        // Only headers exist or completely empty
-        setAttendees([]);
-      } else {
-        // Parse rows omitting headers
-        const parsed: Attendee[] = rows.slice(1).map((r: any[], index: number) => ({
-          no: parseInt(r[0]) || index + 1,
-          nip: r[1] || r[4] || "-", // Fallback in case of transition
-          name: r[2] || "Tanpa Nama",
-          instansi: r[3] || "Umum",
-          jabatan: r[4] || "-",
-          email: r[5] || "-",
-          checkInTime: r[6] || "-",
-          signatureUrl: r[7] || "",
-          sheetRowIndex: index + 2,
-        }));
-        
-        // Sort descending by checkInTime (most recent first)
-        parsed.sort((a, b) => new Date(b.checkInTime).getTime() - new Date(a.checkInTime).getTime());
-        setAttendees(parsed);
-      }
+      const parsed: Attendee[] = await res.json();
+      
+      // Sort descending by checkInTime (most recent first)
+      parsed.sort((a, b) => new Date(b.checkInTime).getTime() - new Date(a.checkInTime).getTime());
+      setAttendees(parsed);
 
       // Record sync time
       const d = new Date();
       setLastSynced(`${d.getHours().toString().padStart(2, "0")}:${d.getMinutes().toString().padStart(2, "0")}:${d.getSeconds().toString().padStart(2, "0")}`);
     } catch (err: any) {
-      console.error("Fetch spreadsheet error:", err);
-      if (err.message && (err.message.includes("403") || err.message.includes("404") || err.message.includes("izin"))) {
+      console.error("Fetch local attendees list error:", err);
+      if (accessToken !== "bypass") {
         setHasAccessError(true);
-      } else {
-        setHasAccessError(true); // Treat access errors conservatively
       }
     } finally {
       setIsLoading(false);
@@ -188,7 +139,6 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
 
   // Toggle Session state on backend (Enable Public Check-ins)
   const handleToggleSession = async () => {
-    if (!accessToken) return;
     setIsActivatingSession(true);
     try {
       if (isSessionActive) {
@@ -203,9 +153,10 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ 
-            accessToken,
+            accessToken: accessToken === "bypass" ? null : accessToken,
             spreadsheetId,
-            driveFolderId
+            driveFolderId,
+            isSessionActive: true
           }),
         });
         if (res.ok) {
@@ -354,9 +305,8 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
     }
   };
 
-  // Truncate/Clear spreadsheet (retains header row)
+  // Truncate/Clear spreadsheet and local database
   const handleClearSpreadsheet = async () => {
-    if (!accessToken) return;
     if (clearConfirmationText !== "HAPUS") {
       alert("Konfirmasi tidak cocok. Silakan ketik 'HAPUS' dengan benar.");
       return;
@@ -364,32 +314,42 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
 
     try {
       setIsLoading(true);
-      const metaRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}`, {
-        headers: { Authorization: `Bearer ${accessToken}` },
-      });
-      const meta = await metaRes.json();
-      const firstTabName = meta.sheets[0].properties.title;
-
-      // Clear range sheets values
-      const clearRes = await fetch(
-        `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(firstTabName)}!A2:H500:clear`,
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-            "Content-Type": "application/json",
-          },
-        }
-      );
-
-      if (clearRes.ok) {
-        setAttendees([]);
-        setShowConfirmClear(false);
-        setClearConfirmationText("");
-        alert("Semua data absensi berhasil dikosongkan (Header tetap dipertahankan).");
-      } else {
-        throw new Error("Gagal mengosongkan spreadsheet.");
+      
+      // Wipe backend local database
+      const localClearRes = await fetch("/api/clear-all", { method: "POST" });
+      if (!localClearRes.ok) {
+        throw new Error("Gagal mengosongkan database lokal.");
       }
+
+      // Best effort wipe Google Sheets if authorized
+      if (accessToken && accessToken !== "bypass") {
+        try {
+          const metaRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}`, {
+            headers: { Authorization: `Bearer ${accessToken}` },
+          });
+          const meta = await metaRes.json();
+          const firstTabName = meta.sheets[0].properties.title;
+
+          // Clear range sheets values
+          await fetch(
+            `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(firstTabName)}!A2:H500:clear`,
+            {
+              method: "POST",
+              headers: {
+                Authorization: `Bearer ${accessToken}`,
+                "Content-Type": "application/json",
+              },
+            }
+          );
+        } catch (gErr) {
+          console.error("Best effort Google Sheet wipe failed:", gErr);
+        }
+      }
+
+      setAttendees([]);
+      setShowConfirmClear(false);
+      setClearConfirmationText("");
+      alert("Semua data absensi berhasil dikosongkan.");
     } catch (err: any) {
       alert(`Gagal mengosongkan data: ${err.message || "Kesalahan koneksi"}`);
     } finally {
@@ -494,9 +454,12 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
         attendees.map(async (a, index) => {
           if (!a.signatureUrl) return;
           try {
-            // Call the proxy route
-            const response = await fetch(`/api/proxy-signature?url=${encodeURIComponent(a.signatureUrl)}`, {
-              headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined
+            // Check if local or external
+            const isLocal = a.signatureUrl.startsWith("/api/");
+            const fetchUrl = isLocal ? a.signatureUrl : `/api/proxy-signature?url=${encodeURIComponent(a.signatureUrl)}`;
+            
+            const response = await fetch(fetchUrl, {
+              headers: (accessToken && !isLocal) ? { Authorization: `Bearer ${accessToken}` } : undefined
             });
             if (!response.ok) return;
             const blob = await response.blob();
@@ -589,12 +552,7 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
   };
 
   const handleSaveEdit = async () => {
-    if (!editingAttendee || !editingAttendee.sheetRowIndex) return;
-    if (!accessToken) {
-      showToast("Token akses tidak tersedia. Harap masuk kembali.", "error");
-      return;
-    }
-
+    if (!editingAttendee) return;
     if (!editName.trim() || !editNip.trim() || !editInstansi.trim() || !editJabatan.trim()) {
       showToast("Semua kolom bertanda * wajib diisi.", "warning");
       return;
@@ -604,49 +562,21 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
     const toastId = showToast("Menyimpan perubahan data peserta...", "loading", 0);
 
     try {
-      const metaRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}`, {
-        headers: { Authorization: `Bearer ${accessToken}` },
+      const res = await fetch(`/api/attendees/${encodeURIComponent(editingAttendee.nip)}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: editName,
+          nip: editNip,
+          instansi: editInstansi,
+          jabatan: editJabatan,
+          email: editEmail
+        })
       });
 
-      if (!metaRes.ok) {
-        throw new Error("Gagal mengambil metadata Google Sheets.");
-      }
-
-      const meta = await metaRes.json();
-      const sheets = meta.sheets || [];
-      const firstTabName = sheets[0].properties.title;
-      const rowNum = editingAttendee.sheetRowIndex;
-
-      const updateRes = await fetch(
-        `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(firstTabName)}!A${rowNum}:H${rowNum}?valueInputOption=USER_ENTERED`,
-        {
-          method: "PUT",
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            range: `${firstTabName}!A${rowNum}:H${rowNum}`,
-            majorDimension: "ROWS",
-            values: [
-              [
-                editingAttendee.no,
-                editNip,
-                editName,
-                editInstansi,
-                editJabatan,
-                editEmail || "-",
-                editingAttendee.checkInTime,
-                editingAttendee.signatureUrl,
-              ],
-            ],
-          }),
-        }
-      );
-
-      if (!updateRes.ok) {
-        const errorText = await updateRes.text();
-        throw new Error(`Gagal memperbarui baris data spreadsheet: ${errorText}`);
+      if (!res.ok) {
+        const errData = await res.json();
+        throw new Error(errData.error || "Gagal memperbarui data.");
       }
 
       dismissToast(toastId);
@@ -663,54 +593,19 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
   };
 
   const handleDeleteAttendee = async () => {
-    if (!deletingAttendee || !deletingAttendee.sheetRowIndex) return;
-    if (!accessToken) {
-      showToast("Token akses tidak tersedia. Harap masuk kembali.", "error");
-      return;
-    }
+    if (!deletingAttendee) return;
 
     setIsDeleting(true);
     const toastId = showToast("Menghapus data peserta...", "loading", 0);
 
     try {
-      const metaRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}`, {
-        headers: { Authorization: `Bearer ${accessToken}` },
+      const res = await fetch(`/api/attendees/${encodeURIComponent(deletingAttendee.nip)}`, {
+        method: "DELETE"
       });
 
-      if (!metaRes.ok) {
-        throw new Error("Gagal mengambil metadata Google Sheets.");
-      }
-
-      const meta = await metaRes.json();
-      const sheets = meta.sheets || [];
-      const firstTabId = sheets[0].properties.sheetId ?? 0;
-      const rowNum = deletingAttendee.sheetRowIndex;
-
-      const deleteRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          requests: [
-            {
-              deleteDimension: {
-                range: {
-                  sheetId: firstTabId,
-                  dimension: "ROWS",
-                  startIndex: rowNum - 1,
-                  endIndex: rowNum
-                }
-              }
-            }
-          ]
-        })
-      });
-
-      if (!deleteRes.ok) {
-        const errorText = await deleteRes.text();
-        throw new Error(`Gagal menghapus baris dari Google Sheets: ${errorText}`);
+      if (!res.ok) {
+        const errData = await res.json();
+        throw new Error(errData.error || "Gagal menghapus data.");
       }
 
       dismissToast(toastId);

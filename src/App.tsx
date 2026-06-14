@@ -14,10 +14,22 @@ type ViewMode = "form" | "admin";
 
 export default function App() {
   const [viewMode, setViewMode] = useState<ViewMode>("form");
-  const [isAdminLoggedIn, setIsAdminLoggedIn] = useState(false);
+  const [isAdminLoggedIn, setIsAdminLoggedIn] = useState(() => {
+    if (typeof window !== "undefined") {
+      return localStorage.getItem("admin_local_logged_in") === "true";
+    }
+    return false;
+  });
   const [adminUser, setAdminUser] = useState<FirebaseUser | null>(null);
-  const [adminToken, setAdminToken] = useState<string | null>(null);
+  const [adminToken, setAdminToken] = useState<string | null>(() => {
+    if (typeof window !== "undefined") {
+      return localStorage.getItem("admin_local_logged_in") === "true" ? "bypass" : null;
+    }
+    return null;
+  });
   const [isPublicSessionActive, setIsPublicSessionActive] = useState(false);
+  const [localPassword, setLocalPassword] = useState("");
+  const [loginError, setLoginError] = useState<string | null>(null);
 
   // Success ticket state (when participant completes draw signature + check-in)
   const [successTicket, setSuccessTicket] = useState<{
@@ -49,11 +61,15 @@ export default function App() {
         setAdminUser(user);
         setAdminToken(token);
         setIsPublicSessionActive(true); // If admin is logged in locally, session is active
+        localStorage.removeItem("admin_local_logged_in"); // Prioritize real google active auth if done
       },
       () => {
-        setIsAdminLoggedIn(false);
-        setAdminUser(null);
-        setAdminToken(null);
+        // Only log out if not explicitly logged in via local bypass
+        if (localStorage.getItem("admin_local_logged_in") !== "true") {
+          setIsAdminLoggedIn(false);
+          setAdminUser(null);
+          setAdminToken(null);
+        }
       }
     );
 
@@ -66,17 +82,52 @@ export default function App() {
   // Handle Admin Google Sign-In
   const handleAdminLogin = async () => {
     try {
+      setLoginError(null);
       const result = await googleSignIn();
       if (result) {
         setIsAdminLoggedIn(true);
         setAdminUser(result.user);
         setAdminToken(result.accessToken);
         setIsPublicSessionActive(true);
+        localStorage.removeItem("admin_local_logged_in");
         // Switch view to Admin panel directly
         setViewMode("admin");
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error("Login failure:", err);
+      setLoginError(err.message || "Gagal masuk menggunakan Google Auth.");
+    }
+  };
+
+  // Handle Local Admin Password sign-in bypass
+  const handleLocalAdminLoginSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!localPassword.trim()) {
+      setLoginError("Silakan masukkan kata sandi Admin.");
+      return;
+    }
+
+    try {
+      setLoginError(null);
+      const res = await fetch("/api/admin/local-login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password: localPassword })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        localStorage.setItem("admin_local_logged_in", "true");
+        setIsAdminLoggedIn(true);
+        setAdminToken("bypass");
+        setIsPublicSessionActive(data.session?.isSessionActive || false);
+        setLocalPassword("");
+        setViewMode("admin");
+      } else {
+        setLoginError(data.error || "Sandi PIN yang dimasukkan tidak cocok.");
+      }
+    } catch (err) {
+      console.error("Local password auth error:", err);
+      setLoginError("Koneksi server gagal.");
     }
   };
 
@@ -86,6 +137,7 @@ export default function App() {
     if (!confirmLogout) return;
     
     await logout();
+    localStorage.removeItem("admin_local_logged_in");
     setIsAdminLoggedIn(false);
     setAdminUser(null);
     setAdminToken(null);
@@ -218,20 +270,59 @@ export default function App() {
               ) : (
                 /* Auth login gate for admin */
                 <div className="bg-white rounded-2xl shadow-xl shadow-slate-100/40 border border-slate-100 p-6 sm:p-8 max-w-sm mx-auto text-center my-6">
-                  <div className="w-12 h-12 bg-emerald-50 text-emerald-600 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <div className="w-12 h-12 bg-indigo-50 text-indigo-600 rounded-full flex items-center justify-center mx-auto mb-4">
                     <LogIn className="w-6 h-6" />
                   </div>
                   <h3 className="text-lg font-bold text-slate-900 mb-1">Otoritas Admin</h3>
                   <p className="text-xs text-slate-400 leading-relaxed mb-6">
-                    Akses dashboard terbatas. Silakan masuk (sign-in) dengan akun Google milik penyelenggara acara.
+                    Akses terbatas. Masuk menggunakan akun Google Anda atau bypass dengan kata sandi panitia di bawah.
                   </p>
-                  
-                  <button
-                    onClick={handleAdminLogin}
-                    className="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold py-3 px-4 rounded-xl text-xs transition flex items-center justify-center gap-1.5 shadow-md shadow-slate-900/10 cursor-pointer"
-                  >
-                    Masuk dengan Akun Google
-                  </button>
+
+                  {loginError && (
+                    <div className="mb-4 p-3 bg-rose-50 text-rose-700 rounded-xl text-xs text-left font-medium border border-rose-100">
+                      {loginError}
+                    </div>
+                  )}
+
+                  <div className="space-y-4 text-left">
+                    <button
+                      onClick={handleAdminLogin}
+                      className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-4 rounded-xl text-xs transition flex items-center justify-center gap-1.5 shadow-md shadow-indigo-600/15 cursor-pointer"
+                    >
+                      Masuk dengan Akun Google
+                    </button>
+
+                    <div className="flex items-center gap-3 my-4 text-slate-300">
+                      <div className="flex-grow h-px bg-slate-150"></div>
+                      <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Atau Sandi Lokal</span>
+                      <div className="flex-grow h-px bg-slate-150"></div>
+                    </div>
+
+                    <form onSubmit={handleLocalAdminLoginSubmit} className="space-y-3">
+                      <div>
+                        <label className="block text-[9.5px] uppercase font-bold text-slate-455 mb-1">Sandi PIN Admin</label>
+                        <input
+                          type="password"
+                          value={localPassword}
+                          onChange={(e) => setLocalPassword(e.target.value)}
+                          placeholder="Masukkan password admin..."
+                          className="w-full bg-slate-50 border border-slate-200 focus:border-indigo-500 focus:bg-white rounded-xl px-3 py-2 text-xs text-slate-800 outline-none transition"
+                        />
+                      </div>
+                      <button
+                        type="submit"
+                        className="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold py-2.5 px-4 rounded-xl text-xs transition flex items-center justify-center gap-1 cursor-pointer shadow-sm"
+                      >
+                        Buka Dashboard Admin
+                      </button>
+                    </form>
+
+                    <div className="bg-slate-50 border border-slate-150/70 p-3 rounded-xl text-center">
+                      <p className="text-[10px] text-slate-500 leading-normal">
+                        PIN Default: <code className="bg-slate-200 px-1 py-0.5 rounded font-mono font-bold text-slate-700">admin123</code> atau <code className="bg-slate-200 px-1 py-0.5 rounded font-mono font-bold text-slate-700">absenkita2026</code>
+                      </p>
+                    </div>
+                  </div>
 
                   {/* High fidelity Smartphone WebView & Popup helper tips */}
                   <div className="mt-6 text-left p-4 bg-amber-50/70 border border-amber-100 rounded-2xl space-y-2">

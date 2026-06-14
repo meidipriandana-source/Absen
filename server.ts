@@ -12,10 +12,49 @@ app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 
 interface AdminSession {
-  accessToken: string;
+  accessToken: string | null;
   savedAt: number;
   spreadsheetId?: string;
   driveFolderId?: string;
+  isSessionActive?: boolean;
+}
+
+const ATTENDEES_FILE = path.join(process.cwd(), "attendees.json");
+
+interface LocalAttendee {
+  no: number;
+  nip: string;
+  name: string;
+  instansi: string;
+  jabatan: string;
+  email: string;
+  checkInTime: string;
+  signature: string; // Base64 signature image
+  signatureUrl: string; // Dynamic local serve url
+  signatureFileId?: string; // Google Drive ID if synced
+  sheetRowIndex?: number;
+}
+
+// Helper to load local attendees
+function loadLocalAttendees(): LocalAttendee[] {
+  try {
+    if (fs.existsSync(ATTENDEES_FILE)) {
+      const data = fs.readFileSync(ATTENDEES_FILE, "utf-8");
+      return JSON.parse(data);
+    }
+  } catch (err) {
+    console.error("Error reading local attendees file:", err);
+  }
+  return [];
+}
+
+// Helper to save local attendees
+function saveLocalAttendees(list: LocalAttendee[]) {
+  try {
+    fs.writeFileSync(ATTENDEES_FILE, JSON.stringify(list, null, 2), "utf-8");
+  } catch (err) {
+    console.error("Error writing local attendees file:", err);
+  }
 }
 
 // Helper to load admin session from file
@@ -24,8 +63,9 @@ function loadSession(): AdminSession | null {
     if (fs.existsSync(SESSION_FILE)) {
       const data = fs.readFileSync(SESSION_FILE, "utf-8");
       const parsed = JSON.parse(data);
-      // Ensure token is less than 3 hours old (Google tokens expire in 1 hr, but let's check basic freshness)
-      if (Date.now() - parsed.savedAt < 3 * 3600 * 1000) {
+      // Local session timeout is larger (24h) than Google auth tokens to prevent random kickouts
+      const expiry = parsed.accessToken ? 3 * 3600 * 1000 : 24 * 3600 * 1000;
+      if (Date.now() - parsed.savedAt < expiry) {
         return parsed;
       }
     }
@@ -36,16 +76,18 @@ function loadSession(): AdminSession | null {
 }
 
 // Helper to save admin session to file
-function saveSession(accessToken: string, spreadsheetId?: string, driveFolderId?: string) {
+function saveSession(accessToken: string | null, spreadsheetId?: string, driveFolderId?: string, isSessionActive?: boolean) {
   try {
+    const existing = loadSession();
     const session: AdminSession = {
-      accessToken,
+      accessToken: accessToken !== undefined ? accessToken : (existing ? existing.accessToken : null),
       savedAt: Date.now(),
-      spreadsheetId,
-      driveFolderId
+      spreadsheetId: spreadsheetId || (existing ? existing.spreadsheetId : undefined),
+      driveFolderId: driveFolderId || (existing ? existing.driveFolderId : undefined),
+      isSessionActive: isSessionActive !== undefined ? isSessionActive : (existing ? existing.isSessionActive : false)
     };
     fs.writeFileSync(SESSION_FILE, JSON.stringify(session, null, 2), "utf-8");
-    console.log("Admin session saved to file.");
+    console.log("Admin session saved to file:", session);
   } catch (err) {
     console.error("Error writing admin session file:", err);
   }
@@ -72,7 +114,7 @@ app.get("/api/session-status", (req, res) => {
   const session = loadSession();
   if (session) {
     res.json({ 
-      active: true, 
+      active: !!session.isSessionActive, 
       savedAt: session.savedAt,
       spreadsheetId: session.spreadsheetId || null,
       driveFolderId: session.driveFolderId || null
@@ -82,28 +124,225 @@ app.get("/api/session-status", (req, res) => {
   }
 });
 
-// Admin saves token for public check-ins
+// Admin saves token/settings for public check-ins
 app.post("/api/save-token", (req, res) => {
-  const { accessToken, spreadsheetId, driveFolderId } = req.body;
-  if (!accessToken) {
-    return res.status(400).json({ error: "Access token is required" });
-  }
-  saveSession(accessToken, spreadsheetId, driveFolderId);
+  const { accessToken, spreadsheetId, driveFolderId, isSessionActive } = req.body;
+  const current = loadSession();
+  
+  saveSession(
+    accessToken !== undefined ? accessToken : (current ? current.accessToken : null),
+    spreadsheetId || (current ? current.spreadsheetId : undefined),
+    driveFolderId || (current ? current.driveFolderId : undefined),
+    isSessionActive !== undefined ? !!isSessionActive : (current ? !!current.isSessionActive : true)
+  );
   res.json({ status: "success", message: "Admin session registered on server." });
+});
+
+// Admin logs in via local PIN/Password fallback bypass
+app.post("/api/admin/local-login", (req, res) => {
+  const { password } = req.body;
+  if (password === "admin" || password === "admin123" || password === "absenkita2026") {
+    const current = loadSession() || {
+      accessToken: null,
+      savedAt: Date.now(),
+      isSessionActive: false
+    };
+    saveSession(
+      current.accessToken,
+      current.spreadsheetId,
+      current.driveFolderId,
+      current.isSessionActive
+    );
+    return res.json({ 
+      success: true, 
+      message: "Login admin lokal sukses.",
+      session: loadSession()
+    });
+  } else {
+    return res.status(401).json({ error: "Password atau PIN salah. Anda bisa menggunakan PIN default: 'admin123' atau 'absenkita2026'." });
+  }
 });
 
 // Admin clears token
 app.post("/api/clear-token", (req, res) => {
-  clearSession();
+  const current = loadSession();
+  if (current) {
+    // Keep credentials, just deactivate active public check-in mode.
+    saveSession(current.accessToken, current.spreadsheetId, current.driveFolderId, false);
+  } else {
+    clearSession();
+  }
   res.json({ status: "success", message: "Admin session removed." });
+});
+
+// Get all attendees (stripped of huge base64 signatures to be ultra-fast)
+app.get("/api/attendees", (req, res) => {
+  const list = loadLocalAttendees();
+  const stripped = list.map(({ signature, ...rest }) => rest);
+  res.json(stripped);
+});
+
+// Fetch base64 signature as local PNG file bypassing Google Drive CORS
+app.get("/api/signatures/:nip", (req, res) => {
+  const { nip } = req.params;
+  const list = loadLocalAttendees();
+  const found = list.find(a => a.nip === nip);
+  if (!found || !found.signature) {
+    return res.status(404).send("Signature not found");
+  }
+
+  try {
+    const base64Data = found.signature.replace(/^data:image\/\w+;base64,/, "");
+    const buffer = Buffer.from(base64Data, "base64");
+    res.setHeader("Content-Type", "image/png");
+    res.setHeader("Cache-Control", "public, max-age=86400"); // cache 24h
+    res.send(buffer);
+  } catch (err: any) {
+    console.error("Local signature streaming error:", err);
+    res.status(500).send("Gagal mengurai gambar tanda tangan");
+  }
+});
+
+// Web attendee deletion endpoint (updates local database + optional Sheets)
+app.delete("/api/attendees/:nip", async (req, res) => {
+  const { nip } = req.params;
+  const list = loadLocalAttendees();
+  const index = list.findIndex(a => a.nip === nip);
+  
+  if (index === -1) {
+    return res.status(404).json({ error: "Data peserta tidak ditemukan." });
+  }
+
+  const removed = list.splice(index, 1)[0];
+  saveLocalAttendees(list);
+
+  // Best-effort delete from Google Sheets if admin has loaded credentials
+  const session = loadSession();
+  if (session && session.accessToken && removed.sheetRowIndex) {
+    try {
+      const token = session.accessToken;
+      const sheetId = session.spreadsheetId || "1Fu2MejKfS_Nm7AdqwERfaU22QBanPeYG8fQeILciwpw";
+      const rowNum = removed.sheetRowIndex;
+
+      const metaRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (metaRes.ok) {
+        const meta = await metaRes.json();
+        const firstTabId = meta.sheets[0].properties.sheetId ?? 0;
+        
+        await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}:batchUpdate`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            requests: [
+              {
+                deleteDimension: {
+                  range: {
+                    sheetId: firstTabId,
+                    dimension: "ROWS",
+                    startIndex: rowNum - 1,
+                    endIndex: rowNum
+                  }
+                }
+              }
+            ]
+          })
+        });
+        console.log(`[Google Sync] Row Deleted on Google Sheets for ${nip}`);
+      }
+    } catch (gErr) {
+      console.error("[Google Sync] Best-effort Google Sheet row deletion failed:", gErr);
+    }
+  }
+
+  res.json({ success: true, message: "Peserta berhasil dihapus dari data lokal." });
+});
+
+// Web attendee edit endpoint (updates local database + optional Sheets)
+app.put("/api/attendees/:nip", async (req, res) => {
+  const { nip } = req.params;
+  const { name, instansi, jabatan, email } = req.body;
+  const list = loadLocalAttendees();
+  const index = list.findIndex(a => a.nip === nip);
+  
+  if (index === -1) {
+    return res.status(404).json({ error: "Data peserta tidak ditemukan." });
+  }
+
+  list[index].name = name || list[index].name;
+  list[index].instansi = instansi || list[index].instansi;
+  list[index].jabatan = jabatan || list[index].jabatan;
+  list[index].email = email || list[index].email;
+
+  saveLocalAttendees(list);
+
+  // Best-effort edit update on Google Sheets
+  const session = loadSession();
+  if (session && session.accessToken && list[index].sheetRowIndex) {
+    try {
+      const token = session.accessToken;
+      const sheetId = session.spreadsheetId || "1Fu2MejKfS_Nm7AdqwERfaU22QBanPeYG8fQeILciwpw";
+      const rowNum = list[index].sheetRowIndex;
+
+      const metaRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (metaRes.ok) {
+        const meta = await metaRes.json();
+        const firstTabName = meta.sheets[0].properties.title;
+        
+        await fetch(
+          `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent(firstTabName)}!A${rowNum}:H${rowNum}?valueInputOption=USER_ENTERED`,
+          {
+            method: "PUT",
+            headers: {
+              Authorization: `Bearer ${token}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              range: `${firstTabName}!A${rowNum}:H${rowNum}`,
+              majorDimension: "ROWS",
+              values: [
+                [
+                  list[index].no,
+                  nip,
+                  list[index].name,
+                  list[index].instansi,
+                  list[index].jabatan,
+                  list[index].email,
+                  list[index].checkInTime,
+                  list[index].signatureUrl,
+                ],
+              ],
+            }),
+          }
+        );
+        console.log(`[Google Sync] Row edited on Google Sheets for ${nip}`);
+      }
+    } catch (gErr) {
+      console.error("[Google Sync] Best-effort Google Sheet row edit failed:", gErr);
+    }
+  }
+
+  res.json({ success: true, message: "Perubahan peserta berhasil disimpan." });
+});
+
+// Admin clears all attendees
+app.post("/api/clear-all", (req, res) => {
+  saveLocalAttendees([]);
+  res.json({ success: true, message: "Seluruh data lokal berhasil dikosongkan." });
 });
 
 // Public Submit Attendance
 app.post("/api/submit-attendance", async (req, res) => {
   const session = loadSession();
-  if (!session || !session.accessToken) {
+  if (!session || !session.isSessionActive) {
     return res.status(401).json({
-      error: "Sesi registrasi belum diaktifkan oleh admin. Harap minta admin untuk login terlebih dahulu."
+      error: "Sesi registrasi belum diaktifkan oleh admin. Harap minta panitia untuk mengaktifkan sesi absensi terlebih dahulu."
     });
   }
 
@@ -114,31 +353,73 @@ app.post("/api/submit-attendance", async (req, res) => {
   }
 
   try {
-    const token = session.accessToken;
+    const list = loadLocalAttendees();
+    
+    // Check duplication based on NIP
+    const alreadyRegistered = list.some(a => a.nip === nip);
+    if (alreadyRegistered) {
+      return res.status(400).json({ error: `NIP ${nip} sudah terdaftar. Anda tidak perlu mengirim absen berulang kali.` });
+    }
 
-    // 1. Upload signature image to Google Drive
-    console.log(`Starting signature upload for: ${name}`);
-    const signatureFileId = await uploadSignatureToDrive(token, name, signature, session.driveFolderId);
-    console.log(`Signature uploaded successfully. File ID: ${signatureFileId}`);
-
-    // FORMAT TIME: current local time (using the user's current date/time)
-    // Format: YYYY-MM-DD HH:mm:ss
     const now = new Date();
     const pad = (n: number) => n.toString().padStart(2, "0");
     const checkInTime = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
 
-    // 2. Append row to Google Sheets
-    console.log(`Appending attendee row to Google Sheets: ${name}`);
-    await appendAttendeeToSheet(token, {
+    const nextNo = list.length + 1;
+    // Generate clean local signature URL
+    const localSigUrl = `/api/signatures/${encodeURIComponent(nip)}?t=${Date.now()}`;
+
+    const newAttendee: LocalAttendee = {
+      no: nextNo,
       nip,
       name,
       instansi,
       jabatan,
       email: email || "-",
       checkInTime,
-      signatureFileId
-    }, session.spreadsheetId);
-    console.log(`Attendee registered successfully: ${name}`);
+      signature,
+      signatureUrl: localSigUrl,
+      sheetRowIndex: nextNo + 1
+    };
+
+    let googleSynced = false;
+    let signatureFileId = "";
+
+    // If Google token is live, upload to sheets and drive!
+    if (session.accessToken) {
+      const token = session.accessToken;
+      try {
+        console.log(`[Google Sync] Uploading signature image to Drive for: ${name}`);
+        signatureFileId = await uploadSignatureToDrive(token, name, signature, session.driveFolderId);
+        newAttendee.signatureFileId = signatureFileId;
+        
+        // Use thumb image or drive direct link
+        const driveUrl = `https://drive.google.com/thumbnail?id=${signatureFileId}&sz=w500`;
+        newAttendee.signatureUrl = driveUrl; // Fallback to drive on sheets
+
+        console.log(`[Google Sync] Appending row to Google Sheet value row: ${name}`);
+        await appendAttendeeToSheet(token, {
+          nip,
+          name,
+          instansi,
+          jabatan,
+          email: email || "-",
+          checkInTime,
+          signatureFileId
+        }, session.spreadsheetId);
+
+        googleSynced = true;
+        console.log(`[Google Sync] Successfully synced to Google cloud: ${name}`);
+      } catch (gErr) {
+        console.error("[Google Sync] Best-effort sync to Google Drive & Google Sheets failed:", gErr);
+        // Do not fail the attendance! It is saved locally.
+        // Recover signature URL to the local serve URL
+        newAttendee.signatureUrl = localSigUrl;
+      }
+    }
+
+    list.push(newAttendee);
+    saveLocalAttendees(list);
 
     res.json({
       success: true,
@@ -146,12 +427,13 @@ app.post("/api/submit-attendance", async (req, res) => {
         id: nip,
         name,
         checkInTime
-      }
+      },
+      syncedWithGoogle: googleSynced
     });
   } catch (error: any) {
-    console.error("Detailed attendance submission error:", error);
+    console.error("Attendance submission process failure:", error);
     res.status(500).json({
-      error: `Pendaftaran gagal: ${error.message || "Kesalahan sistem internal"}`
+      error: `Pendaftaran gagal: ${error.message || "Terjadi kesalahan sistem internal."}`
     });
   }
 });
