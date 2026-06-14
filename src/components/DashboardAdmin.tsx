@@ -882,45 +882,128 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
             </p>
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="bg-slate-50 border-b border-slate-100 text-[11px] uppercase tracking-wider font-semibold text-slate-500">
-                  <th className="py-3 px-4 w-12 text-center">No</th>
-                  <th className="py-3 px-4">Nama Lengkap</th>
-                  <th className="py-3 px-4 w-36">NIP</th>
-                  <th className="py-3 px-4">Instansi</th>
-                  <th className="py-3 px-4 text-slate-500">Jabatan</th>
-                  <th className="py-3 px-4 w-36">Check-In</th>
-                  <th className="py-3 px-4 w-28 text-center">Tandatangan</th>
-                  <th className="py-3 px-4 w-24 text-center">Aksi</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 text-xs text-slate-700">
-                <AnimatePresence initial={false}>
-                  {filteredAttendees.map((a, idx) => (
-                    <motion.tr
-                      key={a.nip + "-" + idx}
-                      initial={{ opacity: 0, y: 12 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0, y: -12 }}
-                      layout="position"
-                      transition={{ duration: 0.25, ease: "easeInOut" }}
-                      className="hover:bg-slate-50/50 transition-colors"
-                    >
-                      <td className="py-2.5 px-4 text-center font-medium text-slate-400">{idx + 1}</td>
-                      <td className="py-2.5 px-4 font-semibold text-slate-800">{a.name}</td>
-                      <td className="py-2.5 px-4 font-mono text-[10.5px] text-slate-600">{a.nip}</td>
-                      <td className="py-2.5 px-4 text-slate-600">{a.instansi}</td>
-                      <td className="py-2.5 px-4 text-slate-600">{a.jabatan}</td>
-                      <td className="py-2.5 px-4 font-mono text-[10.5px] text-slate-500">{a.checkInTime}</td>
-                      <td className="py-2 px-4 text-center">
+          <div>
+            {/* Desktop View: Wide responsive table */}
+            <div className="hidden md:block overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="bg-slate-50 border-b border-slate-100 text-[11px] uppercase tracking-wider font-semibold text-slate-500">
+                    <th className="py-3 px-4 w-12 text-center">No</th>
+                    <th className="py-3 px-4">Nama Lengkap</th>
+                    <th className="py-3 px-4 w-36">NIP</th>
+                    <th className="py-3 px-4">Instansi</th>
+                    <th className="py-3 px-4 text-slate-500">Jabatan</th>
+                    <th className="py-3 px-4 w-36">Check-In</th>
+                    <th className="py-3 px-4 w-28 text-center">Tandatangan</th>
+                    <th className="py-3 px-4 w-24 text-center">Aksi</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 text-xs text-slate-700">
+                  <AnimatePresence initial={false}>
+                    {filteredAttendees.map((a, idx) => (
+                      <motion.tr
+                        key={a.nip + "-" + idx}
+                        initial={{ opacity: 0, y: 12 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -12 }}
+                        layout="position"
+                        transition={{ duration: 0.25, ease: "easeInOut" }}
+                        className="hover:bg-slate-50/50 transition-colors"
+                      >
+                        <td className="py-2.5 px-4 text-center font-medium text-slate-400">{idx + 1}</td>
+                        <td className="py-2.5 px-4 font-semibold text-slate-800">{a.name}</td>
+                        <td className="py-2.5 px-4 font-mono text-[10.5px] text-slate-600">{a.nip}</td>
+                        <td className="py-2.5 px-4 text-slate-600">{a.instansi}</td>
+                        <td className="py-2.5 px-4 text-slate-600">{a.jabatan}</td>
+                        <td className="py-2.5 px-4 font-mono text-[10.5px] text-slate-500">{a.checkInTime}</td>
+                        <td className="py-2 px-4 text-center">
+                          {a.signatureUrl ? (
+                            <div className="inline-block">
+                              <img
+                                src={a.signatureUrl}
+                                alt="Tanda Tangan"
+                                className="max-h-10 max-w-[100px] object-contain mx-auto border border-slate-150 rounded-lg bg-white p-0.5 shadow-xs hover:shadow-md hover:scale-105 transition-all duration-205 cursor-zoom-in active:scale-95"
+                                onClick={() => setSelectedSignature(a.signatureUrl)}
+                                referrerPolicy="no-referrer"
+                                onError={(e) => {
+                                  const target = e.currentTarget;
+                                  target.style.display = "none";
+                                  const parent = target.parentElement;
+                                  if (parent) {
+                                    const btn = document.createElement("button");
+                                    btn.className = "px-1.5 py-0.5 bg-slate-100 text-slate-600 hover:bg-slate-250 border border-slate-200 text-[10px] rounded font-semibold cursor-pointer transition";
+                                    btn.innerText = "Lihat TTD";
+                                    btn.onclick = () => setSelectedSignature(a.signatureUrl);
+                                    parent.appendChild(btn);
+                                  }
+                                }}
+                              />
+                            </div>
+                          ) : (
+                            <span className="text-xs italic text-slate-400">Tidak ada</span>
+                          )}
+                        </td>
+                        <td className="py-2 px-4 text-center">
+                          <div className="flex items-center justify-center gap-1.5">
+                            <button
+                              onClick={() => handleStartEdit(a)}
+                              title="Edit Data"
+                              className="p-1.5 text-slate-500 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition duration-200 cursor-pointer"
+                            >
+                              <Pencil className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={() => setDeletingAttendee(a)}
+                              title="Hapus Data"
+                              className="p-1.5 text-slate-500 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition duration-200 cursor-pointer"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </td>
+                      </motion.tr>
+                    ))}
+                  </AnimatePresence>
+                </tbody>
+              </table>
+            </div>
+
+            {/* Mobile View: High-fidelity touch friendly scroll items list */}
+            <div className="block md:hidden divide-y divide-slate-100">
+              <AnimatePresence initial={false}>
+                {filteredAttendees.map((a, idx) => (
+                  <motion.div
+                    key={a.nip + "-mob-" + idx}
+                    initial={{ opacity: 0, y: 12 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -12 }}
+                    layout="position"
+                    transition={{ duration: 0.25, ease: "easeInOut" }}
+                    className="p-4 space-y-3 hover:bg-slate-50/50 transition duration-150"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="inline-flex items-center justify-center text-[9px] font-extrabold text-slate-550 bg-slate-100 w-5 h-5 rounded-md">
+                            {idx + 1}
+                          </span>
+                          <span className="font-bold text-slate-900 text-xs truncate">
+                            {a.name}
+                          </span>
+                        </div>
+                        <p className="mt-1 font-mono text-[10px] text-slate-500 bg-slate-50 border border-slate-200/50 rounded-lg px-2 py-0.5 inline-block">
+                          NIP: {a.nip}
+                        </p>
+                      </div>
+
+                      {/* Small signature block container */}
+                      <div className="flex-shrink-0">
                         {a.signatureUrl ? (
                           <div className="inline-block">
                             <img
                               src={a.signatureUrl}
-                              alt="Tanda Tangan"
-                              className="max-h-10 max-w-[100px] object-contain mx-auto border border-slate-150 rounded-lg bg-white p-0.5 shadow-xs hover:shadow-md hover:scale-105 transition-all duration-205 cursor-zoom-in active:scale-95"
+                              alt="Tanda Tangan Mini"
+                              className="max-h-12 max-w-[85px] object-contain border border-slate-200 rounded-lg bg-white p-0.5 shadow-2xs hover:shadow-md cursor-zoom-in active:scale-95 transition"
                               onClick={() => setSelectedSignature(a.signatureUrl)}
                               referrerPolicy="no-referrer"
                               onError={(e) => {
@@ -929,7 +1012,7 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
                                 const parent = target.parentElement;
                                 if (parent) {
                                   const btn = document.createElement("button");
-                                  btn.className = "px-1.5 py-0.5 bg-slate-100 text-slate-600 hover:bg-slate-250 border border-slate-200 text-[10px] rounded font-semibold cursor-pointer transition";
+                                  btn.className = "px-1.5 py-0.5 bg-slate-550 text-white text-[9px] rounded font-semibold transition active:scale-95";
                                   btn.innerText = "Lihat TTD";
                                   btn.onclick = () => setSelectedSignature(a.signatureUrl);
                                   parent.appendChild(btn);
@@ -938,32 +1021,46 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
                             />
                           </div>
                         ) : (
-                          <span className="text-xs italic text-slate-400">Tidak ada</span>
+                          <span className="text-[10px] italic text-slate-400">No TTD</span>
                         )}
-                      </td>
-                      <td className="py-2 px-4 text-center">
-                        <div className="flex items-center justify-center gap-1.5">
-                          <button
-                            onClick={() => handleStartEdit(a)}
-                            title="Edit Data"
-                            className="p-1.5 text-slate-500 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition duration-200 cursor-pointer"
-                          >
-                            <Pencil className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            onClick={() => setDeletingAttendee(a)}
-                            title="Hapus Data"
-                            className="p-1.5 text-slate-500 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition duration-200 cursor-pointer"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      </td>
-                    </motion.tr>
-                  ))}
-                </AnimatePresence>
-              </tbody>
-            </table>
+                      </div>
+                    </div>
+
+                    {/* Meta tags with labels */}
+                    <div className="grid grid-cols-2 gap-2 text-[11px] text-slate-600 bg-slate-50/50 p-2.5 rounded-xl border border-slate-100">
+                      <div>
+                        <span className="text-[9px] uppercase font-bold text-slate-400 block">Instansi</span>
+                        <span className="font-semibold text-slate-700 truncate block">{a.instansi}</span>
+                      </div>
+                      <div>
+                        <span className="text-[9px] uppercase font-bold text-slate-400 block">Jabatan</span>
+                        <span className="font-semibold text-slate-700 truncate block">{a.jabatan}</span>
+                      </div>
+                      <div className="col-span-2 border-t border-slate-100/70 pt-1.5 mt-0.5">
+                        <span className="text-[9.5px] font-medium text-slate-400">Check-In: </span>
+                        <span className="font-mono text-slate-600 font-semibold">{a.checkInTime}</span>
+                      </div>
+                    </div>
+
+                    {/* Quick mobile operations */}
+                    <div className="flex justify-end gap-1.5 pt-1.5 border-t border-dashed border-slate-100">
+                      <button
+                        onClick={() => handleStartEdit(a)}
+                        className="px-2.5 py-1.5 bg-slate-50 hover:bg-emerald-50 border border-slate-200 text-slate-600 hover:text-emerald-700 hover:border-emerald-200 rounded-lg text-[11px] font-semibold transition flex items-center gap-1 cursor-pointer"
+                      >
+                        <Pencil className="w-3 h-3" /> Edit Data
+                      </button>
+                      <button
+                        onClick={() => setDeletingAttendee(a)}
+                        className="px-2.5 py-1.5 bg-slate-50 hover:bg-rose-50 border border-slate-200 text-slate-600 hover:text-rose-700 hover:border-rose-200 rounded-lg text-[11px] font-semibold transition flex items-center gap-1 cursor-pointer"
+                      >
+                        <Trash2 className="w-3 h-3" /> Hapus
+                      </button>
+                    </div>
+                  </motion.div>
+                ))}
+              </AnimatePresence>
+            </div>
           </div>
         )}
       </div>

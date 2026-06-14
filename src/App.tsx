@@ -97,14 +97,14 @@ export default function App() {
     <div className="min-h-screen bg-slate-50 text-slate-800 font-sans flex flex-col transition-all duration-300">
       
       {/* Top Professional Navigation Header */}
-      <header className="sticky top-0 z-40 bg-white/90 backdrop-blur-md border-b border-slate-100 px-4 md:px-8 py-3.5 flex items-center justify-between">
-        <div className="flex items-center gap-2.5">
-          <div className="w-9 h-9 rounded-xl bg-emerald-600 text-white flex items-center justify-center shadow-md shadow-emerald-600/10">
-            <ClipboardCheck className="w-5 h-5" />
+      <header className="sticky top-0 z-40 bg-white/90 backdrop-blur-md border-b border-slate-100 px-3 md:px-8 py-3 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <div className="w-8 h-8 rounded-lg bg-emerald-600 text-white flex items-center justify-center shadow-md shadow-emerald-600/10">
+            <ClipboardCheck className="w-4.5 h-4.5" />
           </div>
           <div>
-            <h1 className="text-sm font-extrabold text-slate-900 tracking-tight leading-none">AbsenKehadiran</h1>
-            <span className="text-[10px] text-slate-400 font-medium tracking-wide">E-Presensi & Tanda Tangan Digital</span>
+            <h1 className="text-xs sm:text-sm font-extrabold text-slate-900 tracking-tight leading-none">AbsenKehadiran</h1>
+            <span className="hidden xs:inline-block text-[9px] text-slate-400 font-medium tracking-wide mt-0.5">E-Presensi & Tanda Tangan Digital</span>
           </div>
         </div>
 
@@ -256,20 +256,40 @@ export default function App() {
                 />
               ) : (
                 /* Auth login gate for admin */
-                <div className="bg-white rounded-2xl shadow-xl shadow-slate-100/40 border border-slate-100 p-8 max-w-sm mx-auto text-center my-6">
+                <div className="bg-white rounded-2xl shadow-xl shadow-slate-100/40 border border-slate-100 p-6 sm:p-8 max-w-sm mx-auto text-center my-6">
                   <div className="w-12 h-12 bg-emerald-50 text-emerald-600 rounded-full flex items-center justify-center mx-auto mb-4">
                     <LogIn className="w-6 h-6" />
                   </div>
                   <h3 className="text-lg font-bold text-slate-900 mb-1">Otoritas Admin</h3>
                   <p className="text-xs text-slate-400 leading-relaxed mb-6">
-                    Akses dashboard terbatas. Silakan sign-in dengan akun Google yang memiliki izin baca/tulis Spreadsheet dan Google Drive.
+                    Akses dashboard terbatas. Silakan masuk (sign-in) dengan akun Google milik penyelenggara acara.
                   </p>
+                  
                   <button
                     onClick={handleAdminLogin}
                     className="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold py-3 px-4 rounded-xl text-xs transition flex items-center justify-center gap-1.5 shadow-md shadow-slate-900/10 cursor-pointer"
                   >
                     Masuk dengan Akun Google
                   </button>
+
+                  {/* High fidelity Smartphone WebView & Popup helper tips */}
+                  <div className="mt-6 text-left p-4 bg-amber-50/70 border border-amber-100 rounded-2xl space-y-2">
+                    <h4 className="text-[11px] font-bold text-amber-800 flex items-center gap-1.5">
+                      <Sparkles className="w-3.5 h-3.5 text-amber-600 animate-pulse" />
+                      Tips Akses HP / Smartphone:
+                    </h4>
+                    <p className="text-[10px] text-slate-600 leading-relaxed">
+                      Sistem login Google Workspace memerlukan pemuatan jendela baru (redirect/popup). Jika login tidak merespon di HP Anda:
+                    </p>
+                    <ol className="list-decimal list-inside text-[9.5px] text-slate-500 space-y-1 leading-relaxed pl-1">
+                      <li>
+                        Jangan membukanya langsung dari dalam aplikasi chat seperti <strong>WhatsApp atau Telegram</strong> (In-App WebView biasanya memblokir autentikasi eksternal).
+                      </li>
+                      <li>
+                        Ketuk ikon <strong>tiga titik</strong> di pojok kanan atas layar HP Anda, lalu pilih <strong>&quot;Buka di Browser&quot;</strong> atau <strong>&quot;Buka di Safari/Chrome&quot;</strong>.
+                      </li>
+                    </ol>
+                  </div>
                 </div>
               )}
             </motion.div>
