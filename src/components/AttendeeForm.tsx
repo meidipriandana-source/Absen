@@ -139,7 +139,7 @@ export default function AttendeeForm({ onSuccess, sessionActive }: AttendeeFormP
   }
 
   return (
-    <div className="-m-6 md:-m-8">
+    <div className="w-full">
       {/* Top Professional Header Banner - matching user's requested mock visual style */}
       <div className="bg-indigo-950 bg-gradient-to-r from-indigo-950 to-slate-900 px-6 py-8 md:px-8 text-white">
         <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[9px] font-bold bg-indigo-900/60 text-indigo-300 border border-indigo-800/50 mb-3 uppercase tracking-wider">
@@ -160,116 +160,125 @@ export default function AttendeeForm({ onSuccess, sessionActive }: AttendeeFormP
         )}
 
         <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">
-              Nama Lengkap <span className="text-rose-500">*</span>
-            </label>
-            <div className="relative">
-              <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
-                <User className="w-4 h-4" />
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            
+            {/* Nama Lengkap - full width on md */}
+            <div className="md:col-span-2">
+              <label className="block text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5 select-none">
+                Nama Lengkap <span className="text-rose-500">*</span>
+              </label>
+              <div className="relative">
+                <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
+                  <User className="w-4 h-4 text-indigo-505" />
+                </div>
+                <input
+                  type="text"
+                  required
+                  placeholder="Contoh: Budi Santoso, M.Kom"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  className="w-full pl-10 pr-4 py-2.8 border border-slate-200 rounded-xl text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all bg-white text-slate-800 placeholder-slate-400 font-medium"
+                />
               </div>
-              <input
-                type="text"
-                required
-                placeholder="Contoh: Budi Santoso, M.Kom"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                className="w-full pl-10 pr-4 py-2.5 border border-slate-200 rounded-xl text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 transition-all bg-slate-55/60 text-slate-800"
-              />
             </div>
+
+            {/* Instansi - full width on md */}
+            <div className="md:col-span-2">
+              <label className="block text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5 select-none">
+                Instansi / Universitas / Perusahaan <span className="text-rose-500">*</span>
+              </label>
+              <div className="relative">
+                <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
+                  <School className="w-4 h-4 text-indigo-505" />
+                </div>
+                <input
+                  type="text"
+                  required
+                  placeholder="Contoh: Universitas Indonesia / Dinas Kesehatan / Umum"
+                  value={instansi}
+                  onChange={(e) => setInstansi(e.target.value)}
+                  className="w-full pl-10 pr-4 py-2.8 border border-slate-200 rounded-xl text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all bg-white text-slate-800 placeholder-slate-400 font-medium"
+                />
+              </div>
+            </div>
+
+            {/* NIP - side-by-side */}
+            <div className="col-span-1">
+              <label className="block text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5 select-none">
+                NIP <span className="text-rose-500">*</span>
+              </label>
+              <div className="relative">
+                <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
+                  <Hash className="w-4 h-4 text-indigo-505" />
+                </div>
+                <input
+                  type="text"
+                  required
+                  placeholder="Contoh: 198203112009031002"
+                  value={nip}
+                  onChange={(e) => setNip(e.target.value)}
+                  className="w-full pl-10 pr-4 py-2.8 border border-slate-200 rounded-xl text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all bg-white text-slate-850 placeholder-slate-400 font-mono font-medium"
+                />
+              </div>
+            </div>
+
+            {/* Jabatan - side-by-side */}
+            <div className="col-span-1">
+              <label className="block text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5 select-none">
+                Jabatan <span className="text-rose-500">*</span>
+              </label>
+              <div className="relative">
+                <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
+                  <Briefcase className="w-4 h-4 text-indigo-505" />
+                </div>
+                <input
+                  type="text"
+                  required
+                  placeholder="Contoh: Kepala Seksi / Dosen / Peserta"
+                  value={jabatan}
+                  onChange={(e) => setJabatan(e.target.value)}
+                  className="w-full pl-10 pr-4 py-2.8 border border-slate-200 rounded-xl text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all bg-white text-slate-800 placeholder-slate-400 font-medium"
+                />
+              </div>
+            </div>
+
+            {/* Alamat Email - full width on md */}
+            <div className="md:col-span-2">
+              <label className="block text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5 select-none">
+                Alamat Email <span className="text-slate-400 text-[10px] font-normal lowercase">(opsional)</span>
+              </label>
+              <div className="relative">
+                <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
+                  <Mail className="w-4 h-4 text-indigo-505" />
+                </div>
+                <input
+                  type="email"
+                  placeholder="Contoh: alamat@email.com"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className="w-full pl-10 pr-4 py-2.8 border border-slate-200 rounded-xl text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all bg-white text-slate-800 placeholder-slate-400 font-medium"
+                />
+              </div>
+            </div>
+
           </div>
 
-          <div>
-            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">
-              NIP <span className="text-rose-500">*</span>
-            </label>
-            <div className="relative">
-              <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
-                <Hash className="w-4 h-4" />
-              </div>
-              <input
-                type="text"
-                required
-                placeholder="Contoh: 198203112009031002"
-                value={nip}
-                onChange={(e) => setNip(e.target.value)}
-                className="w-full pl-10 pr-4 py-2.5 border border-slate-200 rounded-xl text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 transition-all bg-slate-55/60 text-slate-800 font-mono"
-              />
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">
-              Instansi <span className="text-rose-500">*</span>
-            </label>
-            <div className="relative">
-              <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
-                <School className="w-4 h-4" />
-              </div>
-              <input
-                type="text"
-                required
-                placeholder="Contoh: Universitas Indonesia / Umum"
-                value={instansi}
-                onChange={(e) => setInstansi(e.target.value)}
-                className="w-full pl-10 pr-4 py-2.5 border border-slate-200 rounded-xl text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 transition-all bg-slate-55/60 text-slate-800"
-              />
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">
-              Jabatan <span className="text-rose-500">*</span>
-            </label>
-            <div className="relative">
-              <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
-                <Briefcase className="w-4 h-4" />
-              </div>
-              <input
-                type="text"
-                required
-                placeholder="Contoh: Kepala Seksi / Dosen"
-                value={jabatan}
-                onChange={(e) => setJabatan(e.target.value)}
-                className="w-full pl-10 pr-4 py-2.5 border border-slate-200 rounded-xl text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 transition-all bg-slate-55/60 text-slate-800"
-              />
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">
-              Alamat Email <span className="text-slate-400 text-[10px] font-normal lowercase">(opsional)</span>
-            </label>
-            <div className="relative">
-              <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
-                <Mail className="w-4 h-4" />
-              </div>
-              <input
-                type="email"
-                placeholder="Contoh: alamat@email.com"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                className="w-full pl-10 pr-4 py-2.5 border border-slate-200 rounded-xl text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 transition-all bg-slate-55/60 text-slate-800"
-              />
-            </div>
-          </div>
-
-          <div className="pt-2">
+          <div className="pt-3">
             <SignaturePad onChange={(base64) => setSignature(base64)} />
           </div>
 
           <button
             type="submit"
             disabled={isSubmitting}
-            className="w-full mt-6 bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 px-4 rounded-xl text-xs transition-all focus:ring-4 focus:ring-emerald-100 flex items-center justify-center gap-2 cursor-pointer disabled:bg-emerald-400 disabled:cursor-not-allowed shadow-md shadow-emerald-600/10"
+            className="w-full mt-6 bg-indigo-650 hover:bg-indigo-700 active:scale-[99] text-white font-bold py-3.5 px-5 rounded-2xl text-xs sm:text-sm transition-all focus:ring-4 focus:ring-indigo-100 flex items-center justify-center gap-2 cursor-pointer disabled:bg-slate-300 disabled:cursor-not-allowed shadow-md shadow-indigo-600/10"
           >
             {isSubmitting ? (
               <>
-                <Loader2 className="w-4 h-4 animate-spin" />
-                Memproses Kehadiran Anda...
+                <Loader2 className="w-4 h-4 animate-spin text-white" />
+                <span>Memproses Kehadiran Anda...</span>
               </>
             ) : (
-              "Hadir & Kirim Absen"
+              <span>Hadir &amp; Kirim Absen</span>
             )}
           </button>
         </form>

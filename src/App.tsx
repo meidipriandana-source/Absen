@@ -192,12 +192,10 @@ export default function App() {
               ) : (
                 /* Elegant, clean full responsive form layout card (completely free of smartphone frame simulator restrictions) */
                 <div className="max-w-2xl mx-auto my-4 bg-white rounded-3xl shadow-xl shadow-slate-100/50 border border-slate-150 overflow-hidden transition-all duration-300">
-                  <div className="p-6 md:p-8">
-                    <AttendeeForm 
-                      onSuccess={(ticket) => setSuccessTicket(ticket)} 
-                      sessionActive={isPublicSessionActive} 
-                    />
-                  </div>
+                  <AttendeeForm 
+                    onSuccess={(ticket) => setSuccessTicket(ticket)} 
+                    sessionActive={isPublicSessionActive} 
+                  />
                 </div>
               )}
             </motion.div>

@@ -1,15 +1,14 @@
 import React, { useRef, useEffect, useState } from "react";
-import { Trash2, Edit3, Palette } from "lucide-react";
+import { Trash2, Edit3, Palette, Eraser, PenTool } from "lucide-react";
 
 interface SignaturePadProps {
   onChange: (base64: string | null) => void;
 }
 
 const INSIGHT_COLORS = [
-  { name: "Charcoal", hex: "#1e293b", bgClass: "bg-slate-800" },
-  { name: "Biru", hex: "#2256f2", bgClass: "bg-blue-600" },
-  { name: "Hitam", hex: "#050505", bgClass: "bg-neutral-950" },
-  { name: "Merah", hex: "#e11d48", bgClass: "bg-rose-600" },
+  { name: "Navy", hex: "#0f172a", bgClass: "bg-slate-900" },
+  { name: "Blue", hex: "#1d4ed8", bgClass: "bg-blue-700" },
+  { name: "Teal", hex: "#0d9488", bgClass: "bg-teal-600" },
 ];
 
 export default function SignaturePad({ onChange }: SignaturePadProps) {
@@ -17,7 +16,7 @@ export default function SignaturePad({ onChange }: SignaturePadProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [isDrawing, setIsDrawing] = useState(false);
   const [isEmpty, setIsEmpty] = useState(true);
-  const [selectedColor, setSelectedColor] = useState("#1e293b");
+  const [selectedColor, setSelectedColor] = useState("#0f172a");
 
   // Resize canvas to fit container properly
   const resizeCanvas = () => {
@@ -35,22 +34,22 @@ export default function SignaturePad({ onChange }: SignaturePadProps) {
     // Support high DPI screens
     const dpr = window.devicePixelRatio || 1;
     canvas.width = rect.width * dpr;
-    canvas.height = 200 * dpr;
+    canvas.height = 190 * dpr;
     canvas.style.width = "100%";
-    canvas.style.height = "200px";
+    canvas.style.height = "190px";
 
     if (ctx) {
       ctx.scale(dpr, dpr);
       ctx.lineCap = "round";
       ctx.lineJoin = "round";
-      ctx.lineWidth = 3;
+      ctx.lineWidth = 3.5;
       ctx.strokeStyle = selectedColor;
 
       // Redraw old content
       if (tempImage) {
         const img = new Image();
         img.onload = () => {
-          ctx.drawImage(img, 0, 0, rect.width, 200);
+          ctx.drawImage(img, 0, 0, rect.width, 190);
         };
         img.src = tempImage;
       }
@@ -78,7 +77,7 @@ export default function SignaturePad({ onChange }: SignaturePadProps) {
     ctx.beginPath();
     ctx.moveTo(coords.x, coords.y);
     ctx.strokeStyle = selectedColor;
-    ctx.lineWidth = 3;
+    ctx.lineWidth = 3.5;
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
     setIsDrawing(true);
@@ -155,29 +154,49 @@ export default function SignaturePad({ onChange }: SignaturePadProps) {
   return (
     <div className="w-full space-y-2">
       <div className="flex items-center justify-between">
-        <label className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
-          <Edit3 className="w-3.5 h-3.5 text-emerald-600" /> Tanda Tangan Digital <span className="text-red-500">*</span>
+        <label className="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5 select-none">
+          Tanda Tangan Digital <span className="text-rose-500">*</span>
         </label>
         
-        <button
-          type="button"
-          onClick={clear}
-          disabled={isEmpty}
-          className={`text-[10px] transition-all flex items-center gap-1 font-bold px-2 py-1.5 rounded-lg border ${
-            isEmpty 
-              ? "bg-slate-50 text-slate-350 border-slate-200 cursor-not-allowed" 
-              : "bg-red-50 text-red-600 border-red-200 hover:bg-red-100"
-          }`}
-        >
-          <Trash2 className="w-3 h-3" /> Bersihkan
-        </button>
+        <div className="flex items-center gap-4">
+          {/* Color choices dot row */}
+          <div className="flex items-center gap-2 bg-slate-100/50 p-1 rounded-full border border-slate-200/30">
+            {INSIGHT_COLORS.map((color) => (
+              <button
+                key={color.hex}
+                type="button"
+                onClick={() => setSelectedColor(color.hex)}
+                className={`w-3.5 h-3.5 rounded-full transition-all cursor-pointer ${color.bgClass} ${
+                  selectedColor === color.hex 
+                    ? "ring-2 ring-indigo-500 ring-offset-1 scale-110 shadow-xs" 
+                    : "hover:scale-105 active:scale-95"
+                }`}
+                title={`Pilih warna ${color.name}`}
+              />
+            ))}
+          </div>
+
+          <button
+            type="button"
+            onClick={clear}
+            disabled={isEmpty}
+            className={`text-xs font-semibold transition-all flex items-center gap-1 cursor-pointer select-none ${
+              isEmpty 
+                ? "text-slate-350 cursor-not-allowed" 
+                : "text-rose-500 hover:text-rose-600 active:scale-95"
+            }`}
+          >
+            <Eraser className="w-3.5 h-3.5 text-rose-450 shrink-0" />
+            <span className="hover:underline">Bersihkan</span>
+          </button>
+        </div>
       </div>
 
       {/* Signature Canvas Board */}
       <div
         ref={containerRef}
         id="signature-container"
-        className="relative w-full border border-slate-200 rounded-2xl bg-slate-50/50 overflow-hidden cursor-crosshair h-[200px]"
+        className="relative w-full border-2 border-dashed border-slate-200 hover:border-indigo-250 rounded-2xl bg-slate-50/30 overflow-hidden cursor-crosshair h-[190px] transition-all"
       >
         <canvas
           ref={canvasRef}
@@ -192,35 +211,20 @@ export default function SignaturePad({ onChange }: SignaturePadProps) {
         />
 
         {isEmpty && (
-          <div className="absolute inset-0 flex items-center justify-center pointer-events-none select-none text-center p-3">
-            <span className="text-[11px] text-slate-400 leading-normal">
-              Goreskan tanda tangan Anda di area ini<br />
-              <span className="text-[9px] italic font-light text-slate-400/80">(Sentuh dengan ujung jari atau stylus HP)</span>
-            </span>
+          <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none select-none text-center p-4 space-y-2">
+            <div className="w-9 h-9 rounded-full bg-indigo-50 text-indigo-500 flex items-center justify-center shadow-xs">
+              <PenTool className="w-4 h-4" />
+            </div>
+            <div>
+              <span className="text-xs font-semibold text-slate-500 block leading-normal">
+                Tulis tanda tangan langsung menggunakan jari atau stylus Anda
+              </span>
+              <span className="text-[10px] text-slate-400 mt-0.5 block">
+                Layar smartphone otomatis terkunci agar nyaman mencoret
+              </span>
+            </div>
           </div>
         )}
-      </div>
-
-      {/* Dynamic Stroke Color Selector Row */}
-      <div className="flex items-center justify-between pt-1 text-[11px]">
-        <span className="text-slate-500 flex items-center gap-1 font-semibold">
-          <Palette className="w-3.5 h-3.5 text-slate-450" /> Pilihan Tinta:
-        </span>
-        <div className="flex items-center gap-2">
-          {INSIGHT_COLORS.map((color) => (
-            <button
-              key={color.hex}
-              type="button"
-              onClick={() => setSelectedColor(color.hex)}
-              className={`w-6 h-6 rounded-full flex items-center justify-center transition-all ${color.bgClass} ${
-                selectedColor === color.hex 
-                  ? "ring-2 ring-emerald-500 ring-offset-2 scale-110 shadow-sm" 
-                  : "hover:scale-105 border border-white/20"
-              }`}
-              title={`Warna ${color.name}`}
-            />
-          ))}
-        </div>
       </div>
     </div>
   );
