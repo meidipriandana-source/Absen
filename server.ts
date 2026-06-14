@@ -11,8 +11,15 @@ const SESSION_FILE = path.join(process.cwd(), "admin_session.json");
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 
+interface AdminSession {
+  accessToken: string;
+  savedAt: number;
+  spreadsheetId?: string;
+  driveFolderId?: string;
+}
+
 // Helper to load admin session from file
-function loadSession(): { accessToken: string; savedAt: number } | null {
+function loadSession(): AdminSession | null {
   try {
     if (fs.existsSync(SESSION_FILE)) {
       const data = fs.readFileSync(SESSION_FILE, "utf-8");
@@ -29,11 +36,13 @@ function loadSession(): { accessToken: string; savedAt: number } | null {
 }
 
 // Helper to save admin session to file
-function saveSession(accessToken: string) {
+function saveSession(accessToken: string, spreadsheetId?: string, driveFolderId?: string) {
   try {
-    const session = {
+    const session: AdminSession = {
       accessToken,
-      savedAt: Date.now()
+      savedAt: Date.now(),
+      spreadsheetId,
+      driveFolderId
     };
     fs.writeFileSync(SESSION_FILE, JSON.stringify(session, null, 2), "utf-8");
     console.log("Admin session saved to file.");
@@ -62,7 +71,12 @@ function clearSession() {
 app.get("/api/session-status", (req, res) => {
   const session = loadSession();
   if (session) {
-    res.json({ active: true, savedAt: session.savedAt });
+    res.json({ 
+      active: true, 
+      savedAt: session.savedAt,
+      spreadsheetId: session.spreadsheetId || null,
+      driveFolderId: session.driveFolderId || null
+    });
   } else {
     res.json({ active: false });
   }
@@ -70,11 +84,11 @@ app.get("/api/session-status", (req, res) => {
 
 // Admin saves token for public check-ins
 app.post("/api/save-token", (req, res) => {
-  const { accessToken } = req.body;
+  const { accessToken, spreadsheetId, driveFolderId } = req.body;
   if (!accessToken) {
     return res.status(400).json({ error: "Access token is required" });
   }
-  saveSession(accessToken);
+  saveSession(accessToken, spreadsheetId, driveFolderId);
   res.json({ status: "success", message: "Admin session registered on server." });
 });
 
@@ -104,7 +118,7 @@ app.post("/api/submit-attendance", async (req, res) => {
 
     // 1. Upload signature image to Google Drive
     console.log(`Starting signature upload for: ${name}`);
-    const signatureFileId = await uploadSignatureToDrive(token, name, signature);
+    const signatureFileId = await uploadSignatureToDrive(token, name, signature, session.driveFolderId);
     console.log(`Signature uploaded successfully. File ID: ${signatureFileId}`);
 
     // FORMAT TIME: current local time (using the user's current date/time)
@@ -123,7 +137,7 @@ app.post("/api/submit-attendance", async (req, res) => {
       email: email || "-",
       checkInTime,
       signatureFileId
-    });
+    }, session.spreadsheetId);
     console.log(`Attendee registered successfully: ${name}`);
 
     res.json({
@@ -143,8 +157,8 @@ app.post("/api/submit-attendance", async (req, res) => {
 });
 
 // Helper for Google Drive Upload
-async function uploadSignatureToDrive(token: string, name: string, signatureBase64: string): Promise<string> {
-  const folderId = '1UseBW7ICFFT-cUPD1HC3KrJUhLCVgEgR';
+async function uploadSignatureToDrive(token: string, name: string, signatureBase64: string, customFolderId?: string): Promise<string> {
+  const folderId = customFolderId || '1UseBW7ICFFT-cUPD1HC3KrJUhLCVgEgR';
   
   // Create File Metadata
   const metaResponse = await fetch("https://www.googleapis.com/drive/v3/files", {
@@ -198,8 +212,8 @@ async function appendAttendeeToSheet(token: string, data: {
   email: string;
   checkInTime: string;
   signatureFileId: string;
-}) {
-  const spreadsheetId = '1Fu2MejKfS_Nm7AdqwERfaU22QBanPeYG8fQeILciwpw';
+}, customSpreadsheetId?: string) {
+  const spreadsheetId = customSpreadsheetId || '1Fu2MejKfS_Nm7AdqwERfaU22QBanPeYG8fQeILciwpw';
 
   // 1. Fetch sheet title
   const metaRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}`, {

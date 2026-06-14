@@ -30,6 +30,16 @@ interface Toast {
 }
 
 export default function DashboardAdmin({ accessToken, onLogin, onLogout }: DashboardAdminProps) {
+  const [spreadsheetId, setSpreadsheetId] = useState<string>(() => {
+    return localStorage.getItem("custom_spreadsheet_id") || "1Fu2MejKfS_Nm7AdqwERfaU22QBanPeYG8fQeILciwpw";
+  });
+  const [driveFolderId, setDriveFolderId] = useState<string>(() => {
+    return localStorage.getItem("custom_drive_folder_id") || "1UseBW7ICFFT-cUPD1HC3KrJUhLCVgEgR";
+  });
+  const [hasAccessError, setHasAccessError] = useState(false);
+  const [isCreatingResources, setIsCreatingResources] = useState(false);
+  const [showConfigSettings, setShowConfigSettings] = useState(false);
+
   const [attendees, setAttendees] = useState<Attendee[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -86,6 +96,14 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
       const res = await fetch("/api/session-status");
       const data = await res.json();
       setIsSessionActive(data.active);
+      if (data.spreadsheetId) {
+        setSpreadsheetId(data.spreadsheetId);
+        localStorage.setItem("custom_spreadsheet_id", data.spreadsheetId);
+      }
+      if (data.driveFolderId) {
+        setDriveFolderId(data.driveFolderId);
+        localStorage.setItem("custom_drive_folder_id", data.driveFolderId);
+      }
     } catch (err) {
       console.error("Error fetching session status:", err);
     }
@@ -95,13 +113,17 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
   const fetchAttendeesFromSheets = async () => {
     if (!accessToken) return;
     setIsLoading(true);
+    setHasAccessError(false);
     try {
       // Step A: Load Spreadsheet Metadata to resolve sheet title of first tab dynamically
-      const metaRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}`, {
+      const metaRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}`, {
         headers: { Authorization: `Bearer ${accessToken}` },
       });
 
       if (!metaRes.ok) {
+        if (metaRes.status === 403 || metaRes.status === 404) {
+          setHasAccessError(true);
+        }
         throw new Error("Gagal mengambil metadata Google Sheets. Periksa koneksi/autentikasi.");
       }
 
@@ -114,7 +136,7 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
 
       // Step B: Load values from the sheet
       const valRes = await fetch(
-        `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(firstTabName)}!A1:H500`,
+        `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(firstTabName)}!A1:H500`,
         {
           headers: { Authorization: `Bearer ${accessToken}` },
         }
@@ -154,6 +176,11 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
       setLastSynced(`${d.getHours().toString().padStart(2, "0")}:${d.getMinutes().toString().padStart(2, "0")}:${d.getSeconds().toString().padStart(2, "0")}`);
     } catch (err: any) {
       console.error("Fetch spreadsheet error:", err);
+      if (err.message && (err.message.includes("403") || err.message.includes("404") || err.message.includes("izin"))) {
+        setHasAccessError(true);
+      } else {
+        setHasAccessError(true); // Treat access errors conservatively
+      }
     } finally {
       setIsLoading(false);
     }
@@ -171,11 +198,15 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
           setIsSessionActive(false);
         }
       } else {
-        // Enable by uploading access token
+        // Enable by uploading access token along with dynamic sheet pointers
         const res = await fetch("/api/save-token", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ accessToken }),
+          body: JSON.stringify({ 
+            accessToken,
+            spreadsheetId,
+            driveFolderId
+          }),
         });
         if (res.ok) {
           setIsSessionActive(true);
@@ -185,6 +216,141 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
       console.error("Toggle session error:", err);
     } finally {
       setIsActivatingSession(false);
+    }
+  };
+
+  // Create dynamic new spreadsheet and folder
+  const handleCreateNewSheetAndFolder = async () => {
+    if (!accessToken) return;
+    setIsCreatingResources(true);
+    const toastId = showToast("Sedang membuat folder Google Drive...", "loading");
+    
+    try {
+      // Step A: Create Folder
+      const folderRes = await fetch("https://www.googleapis.com/drive/v3/files", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          name: "E-Absensi Digital - Signatures",
+          mimeType: "application/vnd.google-apps.folder",
+        }),
+      });
+      
+      if (!folderRes.ok) {
+        throw new Error("Gagal membuat folder tanda tangan di Google Drive.");
+      }
+      
+      const folderData = await folderRes.json();
+      const newFolderId = folderData.id;
+      
+      updateToast(toastId, { message: "Sedang membuat Google Spreadsheet baru..." });
+      
+      // Step B: Create Spreadsheet
+      const sheetRes = await fetch("https://sheets.googleapis.com/v4/spreadsheets", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          properties: {
+            title: "E-Absensi Kehadiran Digital Peserta",
+          },
+        }),
+      });
+      
+      if (!sheetRes.ok) {
+        throw new Error("Gagal membuat Google Spreadsheet baru.");
+      }
+      
+      const sheetData = await sheetRes.json();
+      const newSpreadsheetId = sheetData.spreadsheetId;
+      const firstTabName = sheetData.sheets?.[0]?.properties?.title || "Sheet1";
+      
+      updateToast(toastId, { message: "Menulis header kolom tabel..." });
+      
+      // Step C: Write Headers
+      const writeHeadersRes = await fetch(
+        `https://sheets.googleapis.com/v4/spreadsheets/${newSpreadsheetId}/values/${encodeURIComponent(firstTabName)}!A1:H1?valueInputOption=USER_ENTERED`,
+        {
+          method: "PUT",
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            range: `${firstTabName}!A1:H1`,
+            majorDimension: "ROWS",
+            values: [
+              [
+                "No",
+                "NIP",
+                "Nama Lengkap",
+                "Instansi",
+                "Jabatan",
+                "Email",
+                "Waktu Hadir",
+                "Link Tanda Tangan"
+              ]
+            ],
+          }),
+        }
+      );
+      
+      if (!writeHeadersRes.ok) {
+        throw new Error("Gagal menginisialisasi baris judul kolom.");
+      }
+      
+      // Step D: Enable public sharing for signatures folder so attendees can insert signatures
+      updateToast(toastId, { message: "Mengonfigurasi izin akses folder..." });
+      await fetch(`https://www.googleapis.com/drive/v3/files/${newFolderId}/permissions`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          role: "reader",
+          type: "anyone",
+        }),
+      });
+      
+      // Step E: Update local state & storage
+      localStorage.setItem("custom_spreadsheet_id", newSpreadsheetId);
+      localStorage.setItem("custom_drive_folder_id", newFolderId);
+      setSpreadsheetId(newSpreadsheetId);
+      setDriveFolderId(newFolderId);
+      setHasAccessError(false);
+      
+      // Step F: Sync new credentials with backend server
+      await fetch("/api/save-token", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ 
+          accessToken,
+          spreadsheetId: newSpreadsheetId,
+          driveFolderId: newFolderId
+        }),
+      });
+      
+      setIsSessionActive(true);
+      
+      updateToast(toastId, { 
+        type: "success", 
+        message: "Yay! Spreadsheet & Folder khusus berhasil dibuat dan dihubungkan pada akun Google Anda!" 
+      });
+      
+    } catch (err: any) {
+      console.error("Resource creation error:", err);
+      updateToast(toastId, { 
+        type: "error", 
+        message: `Inisialisasi gagal: ${err.message || "Kesalahan tidak diketahui."}` 
+      });
+    } finally {
+      setIsCreatingResources(false);
     }
   };
 
@@ -198,7 +364,7 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
 
     try {
       setIsLoading(true);
-      const metaRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}`, {
+      const metaRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}`, {
         headers: { Authorization: `Bearer ${accessToken}` },
       });
       const meta = await metaRes.json();
@@ -206,7 +372,7 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
 
       // Clear range sheets values
       const clearRes = await fetch(
-        `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(firstTabName)}!A2:H500:clear`,
+        `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(firstTabName)}!A2:H500:clear`,
         {
           method: "POST",
           headers: {
@@ -241,7 +407,7 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
       }, 10000); // 10s auto refresh
       return () => clearInterval(interval);
     }
-  }, [accessToken]);
+  }, [accessToken, spreadsheetId]);
 
   // Excel Export
   const exportToExcel = () => {
@@ -438,7 +604,7 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
     const toastId = showToast("Menyimpan perubahan data peserta...", "loading", 0);
 
     try {
-      const metaRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}`, {
+      const metaRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}`, {
         headers: { Authorization: `Bearer ${accessToken}` },
       });
 
@@ -452,7 +618,7 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
       const rowNum = editingAttendee.sheetRowIndex;
 
       const updateRes = await fetch(
-        `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(firstTabName)}!A${rowNum}:H${rowNum}?valueInputOption=USER_ENTERED`,
+        `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(firstTabName)}!A${rowNum}:H${rowNum}?valueInputOption=USER_ENTERED`,
         {
           method: "PUT",
           headers: {
@@ -507,7 +673,7 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
     const toastId = showToast("Menghapus data peserta...", "loading", 0);
 
     try {
-      const metaRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}`, {
+      const metaRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}`, {
         headers: { Authorization: `Bearer ${accessToken}` },
       });
 
@@ -520,7 +686,7 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
       const firstTabId = sheets[0].properties.sheetId ?? 0;
       const rowNum = deletingAttendee.sheetRowIndex;
 
-      const deleteRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}:batchUpdate`, {
+      const deleteRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${accessToken}`,
@@ -694,6 +860,14 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
           )}
 
           <button
+            onClick={() => setShowConfigSettings(!showConfigSettings)}
+            className={`bg-slate-800 border ${showConfigSettings ? 'border-emerald-500 bg-slate-850' : 'border-slate-700'} text-slate-200 hover:bg-slate-750 p-2.5 rounded-xl text-xs font-medium cursor-pointer flex items-center gap-1.5`}
+            title="Pengaturan integrasi Google Sheets"
+          >
+            <Settings className="w-4 h-4 text-slate-400" /> Pengaturan Sheet
+          </button>
+
+          <button
             onClick={onLogout}
             className="bg-rose-955 border border-rose-900/40 text-rose-300 hover:bg-rose-500/10 px-3 py-2.5 rounded-xl text-xs font-medium flex items-center gap-1.5 cursor-pointer ml-auto lg:ml-0"
           >
@@ -701,6 +875,144 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
           </button>
         </div>
       </div>
+
+      {hasAccessError && (
+        <motion.div 
+          initial={{ opacity: 0, y: -10 }} 
+          animate={{ opacity: 1, y: 0 }} 
+          className="bg-amber-500/10 border border-amber-500/30 rounded-2xl p-5 text-slate-805 space-y-4"
+        >
+          <div className="flex gap-3">
+            <ShieldAlert className="w-6 h-6 text-amber-500 shrink-0 self-start mt-0.5" />
+            <div>
+              <h2 className="font-bold text-sm text-slate-900">Akses Google Sheets Dibatasi / 403 Forbidden</h2>
+              <p className="text-xs text-slate-600 mt-1 leading-relaxed">
+                Akun Google aktif Anda (<strong>{accessToken ? "Terkoneksi" : "Tidak Terdeteksi"}</strong>) tidak memiliki izin akses edit ke Spreadsheet default. 
+                Ini adalah hal wajar ketika login dengan akun berbeda dari pembuat spreadsheet awal.
+              </p>
+            </div>
+          </div>
+          
+          <div className="bg-white/80 rounded-xl p-4 border border-amber-200/55 space-y-3">
+            <p className="text-xs font-semibold text-slate-700">Solusi Terbaik: Hubungkan Spreadsheet Milik Akun Anda Sendiri</p>
+            <p className="text-[11px] text-slate-500 leading-normal">
+              Sistem akan membuat file Google Spreadsheet absensi baru dan folder penyimpanan tanda tangan baru di akun Google Drive pribadi Anda saat ini. Semua data tersimpan aman dan terintegrasi penuh.
+            </p>
+            
+            <button
+              onClick={handleCreateNewSheetAndFolder}
+              disabled={isCreatingResources}
+              className="bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white font-semibold py-2 px-4 rounded-xl text-xs transition-all flex items-center gap-1.5 shadow-sm cursor-pointer"
+            >
+              {isCreatingResources ? (
+                <>
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                  Menginisialisasi Spreadsheet Akun Anda...
+                </>
+              ) : (
+                <>
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  Inisialisasi Spreadsheet & Folder Saya Otomatis (Sangat Direkomendasikan)
+                </>
+              )}
+            </button>
+          </div>
+        </motion.div>
+      )}
+
+      {showConfigSettings && (
+        <motion.div 
+          initial={{ opacity: 0, height: 0 }} 
+          animate={{ opacity: 1, height: "auto" }} 
+          className="bg-slate-50 border border-slate-200 rounded-2xl p-5 space-y-4"
+        >
+          <div className="flex items-center justify-between">
+            <h3 className="font-bold text-sm text-slate-850 flex items-center gap-2">
+              <Settings className="w-4 h-4 text-slate-500" /> Pengaturan Integrasi Spreadsheet Akun Google Drive Anda
+            </h3>
+            <button 
+              onClick={() => setShowConfigSettings(false)}
+              className="text-slate-400 hover:text-slate-600 cursor-pointer"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="space-y-1.5">
+              <label className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider block">ID Google Spreadsheet Utama</label>
+              <input
+                type="text"
+                value={spreadsheetId}
+                onChange={(e) => {
+                  const val = e.target.value.trim();
+                  setSpreadsheetId(val);
+                  localStorage.setItem("custom_spreadsheet_id", val);
+                  fetch("/api/save-token", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ accessToken, spreadsheetId: val, driveFolderId })
+                  });
+                }}
+                className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs focus:ring-1 focus:ring-emerald-500 outline-none text-slate-700 font-mono"
+                placeholder="Masukkan ID Spreadsheet Anda"
+              />
+              <p className="text-[10px] text-slate-400 leading-normal">
+                Google Spreadsheet tempat menyimpan data kehadiran. Anda bisa menyalinnya dari URL url sheets.
+              </p>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider block">ID Folder Google Drive (Tanda Tangan)</label>
+              <input
+                type="text"
+                value={driveFolderId}
+                onChange={(e) => {
+                  const val = e.target.value.trim();
+                  setDriveFolderId(val);
+                  localStorage.setItem("custom_drive_folder_id", val);
+                  fetch("/api/save-token", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ accessToken, spreadsheetId, driveFolderId: val })
+                  });
+                }}
+                className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs focus:ring-1 focus:ring-emerald-500 outline-none text-slate-700 font-mono"
+                placeholder="Masukkan ID Folder Drive Anda"
+              />
+              <p className="text-[10px] text-slate-400 leading-normal">
+                Folder tempat menyimpan file gambar tanda tangan PNG peserta.
+              </p>
+            </div>
+          </div>
+
+          <div className="bg-slate-100/50 p-4 rounded-xl border border-slate-200/50 flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div>
+              <p className="text-xs font-semibold text-slate-700 font-medium">Buat Baru Secara Otomatis?</p>
+              <p className="text-[10px] text-slate-400 leading-relaxed mt-0.5">
+                Jangan khawatir tentang konfigurasi manual. Klik tombol di samping untuk membuat file Spreadsheet dan folder Drive baru di penyimpanan Google Anda sendiri secara instan.
+              </p>
+            </div>
+
+            <button
+              type="button"
+              onClick={handleCreateNewSheetAndFolder}
+              disabled={isCreatingResources}
+              className="bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white font-semibold py-2 px-4 rounded-xl text-xs transition-all flex items-center justify-center gap-1.5 shrink-0 self-end md:self-auto cursor-pointer"
+            >
+              {isCreatingResources ? (
+                <>
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Menginisialisasi...
+                </>
+              ) : (
+                <>
+                  <CheckCircle2 className="w-3.5 h-3.5" /> Buat Otomatis Sekarang
+                </>
+              )}
+            </button>
+          </div>
+        </motion.div>
+      )}
 
       {/* Numerical Stats Widgets */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -741,7 +1053,7 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
             <div className="flex items-center justify-between text-[10px] bg-slate-50 p-1.5 rounded">
               <span className="font-medium text-slate-600">Spreadsheet</span>
               <a
-                href={`https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}`}
+                href={`https://docs.google.com/spreadsheets/d/${spreadsheetId}`}
                 target="_blank"
                 rel="no-referrer"
                 className="text-emerald-600 font-semibold hover:underline flex items-center gap-0.5"
@@ -752,7 +1064,7 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
             <div className="flex items-center justify-between text-[10px] bg-slate-50 p-1.5 rounded">
               <span className="font-medium text-slate-600">Tanda Tangan</span>
               <a
-                href={`https://drive.google.com/drive/folders/${DRIVE_FOLDER_ID}`}
+                href={`https://drive.google.com/drive/folders/${driveFolderId}`}
                 target="_blank"
                 rel="no-referrer"
                 className="text-emerald-600 font-semibold hover:underline flex items-center gap-0.5"
@@ -883,9 +1195,9 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
           </div>
         ) : (
           <div>
-            {/* Desktop View: Wide responsive table */}
-            <div className="hidden md:block overflow-x-auto">
-              <table className="w-full text-left border-collapse">
+            {/* Unified Wide Data Table (Smooth horizontal scrolling on all screen sizes) */}
+            <div className="overflow-x-auto w-full">
+              <table className="w-full text-left border-collapse min-w-[800px]">
                 <thead>
                   <tr className="bg-slate-50 border-b border-slate-100 text-[11px] uppercase tracking-wider font-semibold text-slate-500">
                     <th className="py-3 px-4 w-12 text-center">No</th>
@@ -966,100 +1278,6 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
                   </AnimatePresence>
                 </tbody>
               </table>
-            </div>
-
-            {/* Mobile View: High-fidelity touch friendly scroll items list */}
-            <div className="block md:hidden divide-y divide-slate-100">
-              <AnimatePresence initial={false}>
-                {filteredAttendees.map((a, idx) => (
-                  <motion.div
-                    key={a.nip + "-mob-" + idx}
-                    initial={{ opacity: 0, y: 12 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -12 }}
-                    layout="position"
-                    transition={{ duration: 0.25, ease: "easeInOut" }}
-                    className="p-4 space-y-3 hover:bg-slate-50/50 transition duration-150"
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <span className="inline-flex items-center justify-center text-[9px] font-extrabold text-slate-550 bg-slate-100 w-5 h-5 rounded-md">
-                            {idx + 1}
-                          </span>
-                          <span className="font-bold text-slate-900 text-xs truncate">
-                            {a.name}
-                          </span>
-                        </div>
-                        <p className="mt-1 font-mono text-[10px] text-slate-500 bg-slate-50 border border-slate-200/50 rounded-lg px-2 py-0.5 inline-block">
-                          NIP: {a.nip}
-                        </p>
-                      </div>
-
-                      {/* Small signature block container */}
-                      <div className="flex-shrink-0">
-                        {a.signatureUrl ? (
-                          <div className="inline-block">
-                            <img
-                              src={a.signatureUrl}
-                              alt="Tanda Tangan Mini"
-                              className="max-h-12 max-w-[85px] object-contain border border-slate-200 rounded-lg bg-white p-0.5 shadow-2xs hover:shadow-md cursor-zoom-in active:scale-95 transition"
-                              onClick={() => setSelectedSignature(a.signatureUrl)}
-                              referrerPolicy="no-referrer"
-                              onError={(e) => {
-                                const target = e.currentTarget;
-                                target.style.display = "none";
-                                const parent = target.parentElement;
-                                if (parent) {
-                                  const btn = document.createElement("button");
-                                  btn.className = "px-1.5 py-0.5 bg-slate-550 text-white text-[9px] rounded font-semibold transition active:scale-95";
-                                  btn.innerText = "Lihat TTD";
-                                  btn.onclick = () => setSelectedSignature(a.signatureUrl);
-                                  parent.appendChild(btn);
-                                }
-                              }}
-                            />
-                          </div>
-                        ) : (
-                          <span className="text-[10px] italic text-slate-400">No TTD</span>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Meta tags with labels */}
-                    <div className="grid grid-cols-2 gap-2 text-[11px] text-slate-600 bg-slate-50/50 p-2.5 rounded-xl border border-slate-100">
-                      <div>
-                        <span className="text-[9px] uppercase font-bold text-slate-400 block">Instansi</span>
-                        <span className="font-semibold text-slate-700 truncate block">{a.instansi}</span>
-                      </div>
-                      <div>
-                        <span className="text-[9px] uppercase font-bold text-slate-400 block">Jabatan</span>
-                        <span className="font-semibold text-slate-700 truncate block">{a.jabatan}</span>
-                      </div>
-                      <div className="col-span-2 border-t border-slate-100/70 pt-1.5 mt-0.5">
-                        <span className="text-[9.5px] font-medium text-slate-400">Check-In: </span>
-                        <span className="font-mono text-slate-600 font-semibold">{a.checkInTime}</span>
-                      </div>
-                    </div>
-
-                    {/* Quick mobile operations */}
-                    <div className="flex justify-end gap-1.5 pt-1.5 border-t border-dashed border-slate-100">
-                      <button
-                        onClick={() => handleStartEdit(a)}
-                        className="px-2.5 py-1.5 bg-slate-50 hover:bg-emerald-50 border border-slate-200 text-slate-600 hover:text-emerald-700 hover:border-emerald-200 rounded-lg text-[11px] font-semibold transition flex items-center gap-1 cursor-pointer"
-                      >
-                        <Pencil className="w-3 h-3" /> Edit Data
-                      </button>
-                      <button
-                        onClick={() => setDeletingAttendee(a)}
-                        className="px-2.5 py-1.5 bg-slate-50 hover:bg-rose-50 border border-slate-200 text-slate-600 hover:text-rose-700 hover:border-rose-200 rounded-lg text-[11px] font-semibold transition flex items-center gap-1 cursor-pointer"
-                      >
-                        <Trash2 className="w-3 h-3" /> Hapus
-                      </button>
-                    </div>
-                  </motion.div>
-                ))}
-              </AnimatePresence>
             </div>
           </div>
         )}

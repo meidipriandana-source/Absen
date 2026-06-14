@@ -96,41 +96,46 @@ export default function App() {
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 font-sans flex flex-col transition-all duration-300">
       
-      {/* Top Professional Navigation Header */}
-      <header className="sticky top-0 z-40 bg-white/90 backdrop-blur-md border-b border-slate-100 px-3 md:px-8 py-3 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <div className="w-8 h-8 rounded-lg bg-emerald-600 text-white flex items-center justify-center shadow-md shadow-emerald-600/10">
-            <ClipboardCheck className="w-4.5 h-4.5" />
+      {/* Dynamic Deep Indigo Header styled precisely based on user UI specifications */}
+      <header className="sticky top-0 z-40 bg-slate-900 border-b border-slate-950 px-4 md:px-8 py-3.5 flex items-center justify-between shadow-md">
+        <div className="flex items-center gap-2.5">
+          <div className="w-9 h-9 rounded-xl bg-indigo-600 text-white flex items-center justify-center shadow-md shadow-indigo-600/30">
+            <ClipboardCheck className="w-5 h-5" />
           </div>
           <div>
-            <h1 className="text-xs sm:text-sm font-extrabold text-slate-900 tracking-tight leading-none">AbsenKehadiran</h1>
-            <span className="hidden xs:inline-block text-[9px] text-slate-400 font-medium tracking-wide mt-0.5">E-Presensi & Tanda Tangan Digital</span>
+            <h1 className="text-sm md:text-base font-extrabold text-white tracking-tight leading-none">AbsenKita</h1>
+            <span className="inline-block text-[9px] text-indigo-300 font-semibold tracking-wider uppercase mt-1">Smart Presence System</span>
           </div>
         </div>
 
-        {/* Tab switcher Controls */}
-        <div className="flex bg-slate-100 p-1 rounded-xl">
+        {/* Tab switcher Controls / Quick Actions */}
+        <div className="flex items-center gap-1.5 bg-slate-950/40 p-1 rounded-xl border border-white/5">
           <button
             onClick={() => {
               setViewMode("form");
               setSuccessTicket(null); // Close active success card
             }}
-            className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all relative cursor-pointer ${
-              viewMode === "form" ? "bg-white text-slate-950 shadow-sm" : "text-slate-500 hover:text-slate-850"
+            className={`px-4 py-1.8 rounded-lg text-xs font-bold transition-all relative cursor-pointer flex items-center gap-1.5 ${
+              viewMode === "form" 
+                ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/20" 
+                : "text-slate-400 hover:text-slate-200"
             }`}
           >
-            Form Absen
+            <User className="w-3.5 h-3.5" />
+            Isi Absen
           </button>
           
           <button
             onClick={() => setViewMode("admin")}
-            className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1 cursor-pointer ${
-              viewMode === "admin" ? "bg-white text-slate-950 shadow-sm" : "text-slate-500 hover:text-slate-850"
+            className={`px-4 py-1.8 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+              viewMode === "admin" 
+                ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/20" 
+                : "text-slate-400 hover:text-slate-200"
             }`}
           >
             Dashboard Admin
             {isPublicSessionActive && (
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 self-center" title="Sesi publik aktif"></span>
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse self-center" title="Sesi publik aktif"></span>
             )}
           </button>
         </div>
@@ -149,8 +154,8 @@ export default function App() {
               className="w-full"
             >
               {successTicket ? (
-                /* Ticket success screen block inside smartphone wrapper */
-                <div className="max-w-sm mx-auto my-2 bg-white rounded-3xl shadow-xl border border-slate-150 overflow-hidden text-center">
+                /* Ticket success screen block - styled elegantly as a standard web modal card */
+                <div className="max-w-md mx-auto my-6 bg-white rounded-3xl shadow-xl border border-slate-150 overflow-hidden text-center transition-all">
                   <div className="bg-emerald-600 p-6 text-white text-center flex flex-col items-center">
                     <div className="w-12 h-12 bg-white/20 rounded-full flex items-center justify-center mb-3">
                       <CheckCircle2 className="w-7 h-7 text-white" />
@@ -185,55 +190,13 @@ export default function App() {
                   </div>
                 </div>
               ) : (
-                /* Show high-fidelity Smartphone Device Wrapper mockup for the form on desktop, pure responsive on mobile */
-                <div className="flex flex-col items-center justify-center py-2">
-                  <div className="relative mx-auto w-full max-w-[390px] bg-slate-950 rounded-[48px] p-2.5 shadow-[0_25px_50px_-12px_rgba(0,0,0,0.25)] border-4 border-slate-800/90 transition-all duration-300">
-                    
-                    {/* Speaker notch capsule */}
-                    <div className="absolute top-4 left-1/2 transform -translate-x-1/2 h-5 w-28 bg-slate-950 rounded-full z-30 flex items-center justify-between px-3">
-                      <div className="w-1.5 h-1.5 rounded-full bg-slate-800"></div>
-                      <div className="w-11 h-1 bg-slate-800 rounded-full"></div>
-                      <div className="w-2.5 h-2.5 rounded-full bg-slate-900 border border-slate-800 flex items-center justify-center">
-                        <div className="w-1 h-1 rounded-full bg-blue-900"></div>
-                      </div>
-                    </div>
-
-                    {/* Left volume/silent controls visual block */}
-                    <div className="absolute -left-3.5 top-24 w-1 h-10 bg-slate-700 rounded-r-lg"></div>
-                    <div className="absolute -left-3.5 top-36 w-1 h-12 bg-slate-700 rounded-r-lg"></div>
-                    <div className="absolute -left-3.5 top-50 w-1 h-12 bg-slate-700 rounded-r-lg"></div>
-                    
-                    {/* Right power control visual block */}
-                    <div className="absolute -right-3.5 top-24 w-1 h-16 bg-slate-700 rounded-l-lg"></div>
-
-                    {/* Smartphone Screen container */}
-                    <div className="relative overflow-hidden w-full bg-white rounded-[38px] min-h-[640px] flex flex-col pt-7 shadow-inner">
-                      
-                      {/* Live Simulated Status Bar */}
-                      <div className="px-5 py-1.5 flex items-center justify-between text-[10px] font-bold text-slate-700 select-none z-20">
-                        <span>{new Date().toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })}</span>
-                        <div className="flex items-center gap-1.5">
-                          {/* Signal strength indicator */}
-                          <svg className="w-3.5 h-2.5 fill-current text-slate-705" viewBox="0 0 24 24">
-                            <path d="M2 22h20V2z" />
-                          </svg>
-                          <span className="text-[8px] bg-slate-200 px-1 rounded">5G</span>
-                          {/* Battery indicator */}
-                          <div className="w-5 h-2.5 border border-slate-700 rounded p-0.5 flex items-center">
-                            <div className="h-full w-full bg-slate-700 rounded-2xs"></div>
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Actual Scrollable Form */}
-                      <div className="flex-1 overflow-y-auto px-4 pb-6 scrollbar-thin">
-                        <AttendeeForm 
-                          onSuccess={(ticket) => setSuccessTicket(ticket)} 
-                          sessionActive={isPublicSessionActive} 
-                        />
-                      </div>
-                    </div>
-
+                /* Elegant, clean full responsive form layout card (completely free of smartphone frame simulator restrictions) */
+                <div className="max-w-2xl mx-auto my-4 bg-white rounded-3xl shadow-xl shadow-slate-100/50 border border-slate-150 overflow-hidden transition-all duration-300">
+                  <div className="p-6 md:p-8">
+                    <AttendeeForm 
+                      onSuccess={(ticket) => setSuccessTicket(ticket)} 
+                      sessionActive={isPublicSessionActive} 
+                    />
                   </div>
                 </div>
               )}
@@ -300,7 +263,7 @@ export default function App() {
       {/* Humble Footer branding */}
       <footer className="py-5 border-t border-slate-150/50 bg-white text-center text-[10px] text-slate-450 mt-10">
         <p className="font-medium">AbsenKehadiran digital &middot; Google Workspace Cloud Integration</p>
-        <p className="text-[9px] text-slate-400 mt-1">Spreadsheet ID: 1Fu2MejKfS_... &middot; Drive Folder ID: 1UseBW7I...</p>
+        <p className="text-[9px] text-slate-400 mt-1">Google Sheets &amp; Drive Cloud Integration Active</p>
       </footer>
     </div>
   );
