@@ -834,19 +834,56 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
     const toastId = showToast("Menghapus data peserta...", "loading", 0);
 
     try {
-      const res = await fetch(`/api/attendees/${encodeURIComponent(deletingAttendee.nip)}`, {
-        method: "DELETE"
-      });
+      let isOfflineDeleted = false;
 
-      if (!res.ok) {
-        const errData = await res.json();
-        throw new Error(errData.error || "Gagal menghapus data.");
+      // Try searching and purging from local offline state if stored
+      const storedStr = localStorage.getItem("local_offline_attendees") || "[]";
+      let storedList = JSON.parse(storedStr);
+      const initialLength = storedList.length;
+      storedList = storedList.filter(
+        (a: any) => !(a.nip.trim().toLowerCase() === deletingAttendee.nip.trim().toLowerCase() && 
+                      a.name.trim().toLowerCase() === deletingAttendee.name.trim().toLowerCase())
+      );
+      if (storedList.length < initialLength) {
+        localStorage.setItem("local_offline_attendees", JSON.stringify(storedList));
+        isOfflineDeleted = true;
       }
 
-      dismissToast(toastId);
-      showToast("Data peserta berhasil dihapus!", "success");
-      setDeletingAttendee(null);
-      fetchAttendeesFromSheets();
+      // If the record was purely registered offline, we don't need server request
+      if (deletingAttendee.isOfflineOnly) {
+        dismissToast(toastId);
+        showToast("Data peserta offline berhasil dihapus!", "success");
+        setDeletingAttendee(null);
+        fetchAttendeesFromSheets();
+        return;
+      }
+
+      // Otherwise, request deletion from Express service / Google Sheets
+      try {
+        const res = await fetch(`/api/attendees/${encodeURIComponent(deletingAttendee.nip)}`, {
+          method: "DELETE"
+        });
+
+        if (!res.ok) {
+          const errData = await res.json();
+          throw new Error(errData.error || "Gagal menghapus data di Google Sheets.");
+        }
+
+        dismissToast(toastId);
+        showToast("Data peserta berhasil dihapus!", "success");
+        setDeletingAttendee(null);
+        fetchAttendeesFromSheets();
+      } catch (err: any) {
+        console.warn("Server delete failed, checking offline state purge:", err);
+        if (isOfflineDeleted) {
+          dismissToast(toastId);
+          showToast("Data peserta berhasil dihapus dari cache lokal!", "success");
+          setDeletingAttendee(null);
+          fetchAttendeesFromSheets();
+        } else {
+          throw err;
+        }
+      }
     } catch (err: any) {
       console.error("Error deleting attendee:", err);
       dismissToast(toastId);
