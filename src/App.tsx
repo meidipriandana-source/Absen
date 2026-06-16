@@ -23,18 +23,80 @@ export default function App() {
     return false;
   });
 
+  // Refactored Multi-Session & Tab Synchronization Theme Engine
   useEffect(() => {
-    if (darkMode) {
-      document.documentElement.classList.add("dark");
+    const syncTheme = () => {
+      const saved = localStorage.getItem("theme");
+      let shouldBeDark = false;
+      if (saved) {
+        shouldBeDark = saved === "dark";
+      } else {
+        shouldBeDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+      }
+      
+      setDarkMode(shouldBeDark);
+      if (shouldBeDark) {
+        document.documentElement.classList.add("dark");
+      } else {
+        document.documentElement.classList.remove("dark");
+      }
+    };
+
+    // 1. Cross-session / tab update listener
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === "theme") {
+        syncTheme();
+      }
+    };
+    window.addEventListener("storage", handleStorageChange);
+
+    // 2. High-performance polling effect (handles fast session state checks & prevents flicker)
+    const pollInterval = setInterval(() => {
+      const saved = localStorage.getItem("theme");
+      const currentIsLoggedAsDark = document.documentElement.classList.contains("dark");
+      const expectedDark = saved ? saved === "dark" : window.matchMedia("(prefers-color-scheme: dark)").matches;
+      
+      if (expectedDark !== currentIsLoggedAsDark) {
+        syncTheme();
+      }
+    }, 1000);
+
+    // 3. System colors preference updates listener
+    const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+    const handleMediaQueryChange = () => {
+      if (!localStorage.getItem("theme")) {
+        syncTheme();
+      }
+    };
+    if (mediaQuery.addEventListener) {
+      mediaQuery.addEventListener("change", handleMediaQueryChange);
     } else {
-      document.documentElement.classList.remove("dark");
+      mediaQuery.addListener(handleMediaQueryChange);
     }
-  }, [darkMode]);
+
+    // Baseline run during loading
+    syncTheme();
+
+    return () => {
+      window.removeEventListener("storage", handleStorageChange);
+      clearInterval(pollInterval);
+      if (mediaQuery.removeEventListener) {
+        mediaQuery.removeEventListener("change", handleMediaQueryChange);
+      } else {
+        mediaQuery.removeListener(handleMediaQueryChange);
+      }
+    };
+  }, []);
 
   const toggleDarkMode = () => {
     setDarkMode(prev => {
       const next = !prev;
       localStorage.setItem("theme", next ? "dark" : "light");
+      if (next) {
+        document.documentElement.classList.add("dark");
+      } else {
+        document.documentElement.classList.remove("dark");
+      }
       return next;
     });
   };
@@ -217,6 +279,11 @@ export default function App() {
     setAdminToken(null);
     setViewMode("form"); // Redirect back to form
     checkPublicSession();
+
+    if (localStorage.getItem("admin_auto_logged_out_due_to_inactivity") === "true") {
+      setLoginError("Sesi Anda berakhir karena tidak ada aktivitas selama 15 menit untuk alasan keamanan. Silakan login kembali.");
+      localStorage.removeItem("admin_auto_logged_out_due_to_inactivity");
+    }
   };
 
   return (

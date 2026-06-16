@@ -1,13 +1,13 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { 
   Users, School, CalendarCheck2, ShieldCheck, RefreshCw, Download, FileDown,
   Search, ShieldAlert, ChevronRight, LogOut, CheckCircle2, QrCode, 
   Settings, ExternalLink, Trash2, Key, Info, HelpCircle, Loader2, X, Pencil,
-  Bell, Mail, Send, MessageSquare
+  Bell, Mail, Send, MessageSquare, Calendar, Filter
 } from "lucide-react";
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, 
-  ResponsiveContainer, AreaChart, Area 
+  ResponsiveContainer, AreaChart, Area, PieChart, Pie, Cell
 } from "recharts";
 import * as XLSX from "xlsx";
 import { jsPDF } from "jspdf";
@@ -71,6 +71,8 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
   });
   const [isBackgroundFetching, setIsBackgroundFetching] = useState<boolean>(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [startDateFilter, setStartDateFilter] = useState("");
+  const [endDateFilter, setEndDateFilter] = useState("");
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [trendViewType, setTrendViewType] = useState<"minute" | "hour" | "cumulative">("cumulative");
 
@@ -104,9 +106,18 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
   const [showConfirmClear, setShowConfirmClear] = useState(false);
   const [clearConfirmationText, setClearConfirmationText] = useState("");
   const [showConfirmToggleSession, setShowConfirmToggleSession] = useState(false);
+  const [isExportingExcel, setIsExportingExcel] = useState(false);
   const [isExportingPdf, setIsExportingPdf] = useState(false);
   const [pdfProgressText, setPdfProgressText] = useState("");
   const [showPdfOptions, setShowPdfOptions] = useState(false);
+
+  // Editable Target states
+  const [attendanceTarget, setAttendanceTarget] = useState<number>(() => {
+    const saved = localStorage.getItem("admin_attendance_target");
+    return saved ? parseInt(saved, 10) : 50;
+  });
+  const [isEditingTarget, setIsEditingTarget] = useState(false);
+  const [tempTarget, setTempTarget] = useState(attendanceTarget.toString());
 
   const [editingAttendee, setEditingAttendee] = useState<Attendee | null>(null);
   const [editName, setEditName] = useState("");
@@ -121,12 +132,20 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
 
   const publicUrl = window.location.origin;
 
+  const isFirstLoadRef = useRef<boolean>(true);
+  const seenAttendeeKeysRef = useRef<Set<string>>(new Set());
+
   const fetchNotificationSettings = async () => {
     try {
       const res = await fetch("/api/notifications/config");
       if (res.ok) {
-        const data = await res.json();
-        setNotificationSettings(data);
+        const contentType = res.headers.get("content-type") || "";
+        if (contentType.includes("application/json")) {
+          const data = await res.json();
+          setNotificationSettings(data);
+        } else {
+          console.warn("Notification config response was not JSON.");
+        }
       }
     } catch (err) {
       console.error("Error fetching notification settings:", err);
@@ -141,10 +160,15 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(notificationSettings),
       });
+      const contentType = res.headers.get("content-type") || "";
+      if (!contentType.includes("application/json")) {
+        throw new Error("Respon server bukan JSON (backend server offline atau hosting statis). Silakan periksa koneksi backend Anda.");
+      }
       if (res.ok) {
         showToast("Pengaturan notifikasi berhasil disimpan!", "success");
       } else {
-        throw new Error("Gagal menyimpan ke server");
+        const data = await res.json();
+        throw new Error(data.error || "Gagal menyimpan ke server");
       }
     } catch (error: any) {
       showToast(`Gagal menyimpan: ${error.message}`, "error");
@@ -165,6 +189,10 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
           settings: notificationSettings,
         }),
       });
+      const contentType = res.headers.get("content-type") || "";
+      if (!contentType.includes("application/json")) {
+        throw new Error("Respon server bukan JSON. Kemungkinan server backend tidak aktif atau rute API ini 404 pada Vercel/hosting Anda.");
+      }
       const data = await res.json();
       if (res.ok) {
         updateToast(toastId, { message: `Sukses! ${data.message || 'Pesan tes terkirim.'}`, type: "success" });
@@ -284,6 +312,47 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
     parsed.forEach((item, index) => {
       item.no = parsed.length - index;
     });
+
+    // Handle real-time user presences and raise beautiful toast alerts
+    if (isFirstLoadRef.current) {
+      // First load: seed known attendee keys to prevent spamming pre-existing data on fresh login
+      parsed.forEach(a => {
+        const key = `${(a.nip || "").trim().toLowerCase()}_${(a.name || "").trim().toLowerCase()}`;
+        if (key) {
+          seenAttendeeKeysRef.current.add(key);
+        }
+      });
+      isFirstLoadRef.current = false;
+    } else {
+      const brandNewAttendees: Attendee[] = [];
+      parsed.forEach(a => {
+        const key = `${(a.nip || "").trim().toLowerCase()}_${(a.name || "").trim().toLowerCase()}`;
+        if (key && !seenAttendeeKeysRef.current.has(key)) {
+          seenAttendeeKeysRef.current.add(key);
+          brandNewAttendees.push(a);
+        }
+      });
+
+      if (brandNewAttendees.length > 0) {
+        if (brandNewAttendees.length <= 3) {
+          // Individual detailed toast alert
+          brandNewAttendees.forEach(na => {
+            showToast(
+              `🔔 Presensi Baru: ${na.name} (${na.instansi || "Umum"}) berhasil check-in!`,
+              "success",
+              4500
+            );
+          });
+        } else {
+          // Aggregated summary toast alert
+          showToast(
+            `🔔 ${brandNewAttendees.length} peserta baru telah melakukan presensi pada sistem!`,
+            "success",
+            5000
+          );
+        }
+      }
+    }
 
     setAttendees(parsed);
 
@@ -575,6 +644,8 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
       }
 
       setAttendees([]);
+      seenAttendeeKeysRef.current.clear();
+      isFirstLoadRef.current = true;
       setShowConfirmClear(false);
       setClearConfirmationText("");
       alert("Semua data absensi berhasil dikosongkan.");
@@ -603,6 +674,47 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
     return () => clearInterval(interval);
   }, [isAutoRefreshEnabled, autoRefreshInterval]);
 
+  // 15-Minute Auto Logout Security Trigger based on inactivity
+  useEffect(() => {
+    let timeoutId: ReturnType<typeof setTimeout>;
+    let lastActivityTime = Date.now();
+
+    const resetTimer = () => {
+      if (timeoutId) clearTimeout(timeoutId);
+      // Modeled for exactly 15 minutes: 15 * 60 * 1000 = 900,000 ms
+      timeoutId = setTimeout(() => {
+        localStorage.setItem("admin_auto_logged_out_due_to_inactivity", "true");
+        onLogout();
+      }, 15 * 60 * 1000);
+    };
+
+    const handleUserActivity = () => {
+      const now = Date.now();
+      // Throttle event response to once every 2 seconds for high performance
+      if (now - lastActivityTime > 2000) {
+        lastActivityTime = now;
+        resetTimer();
+      }
+    };
+
+    const activityEvents = ["mousedown", "mousemove", "keypress", "scroll", "touchstart", "click"];
+
+    // Start initial timer
+    resetTimer();
+
+    // Register event listeners
+    activityEvents.forEach((event) => {
+      window.addEventListener(event, handleUserActivity);
+    });
+
+    return () => {
+      if (timeoutId) clearTimeout(timeoutId);
+      activityEvents.forEach((event) => {
+        window.removeEventListener(event, handleUserActivity);
+      });
+    };
+  }, [onLogout]);
+
   // Excel Export
   const exportToExcel = () => {
     if (attendees.length === 0) {
@@ -610,47 +722,53 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
       return;
     }
 
+    setIsExportingExcel(true);
     const toastId = showToast("Sedang menyiapkan data Excel...", "loading", 0);
 
-    try {
-      // Convert data to Excel readable properties
-      const exportRows = attendees.map((a, index) => ({
-        No: index + 1,
-        "Nama Lengkap": a.name,
-        NIP: a.nip,
-        "Instansi": a.instansi,
-        "Jabatan": a.jabatan,
-        Email: a.email,
-        "Waktu Hadir": a.checkInTime,
-        "Link Tanda Tangan (Drive Thumbs)": a.signatureUrl,
-      }));
+    // Use setTimeout so the browser can render the spinner/loading state first
+    setTimeout(() => {
+      try {
+        // Convert data to Excel readable properties
+        const exportRows = attendees.map((a, index) => ({
+          No: index + 1,
+          "Nama Lengkap": a.name,
+          NIP: a.nip,
+          "Instansi": a.instansi,
+          "Jabatan": a.jabatan,
+          Email: a.email,
+          "Waktu Hadir": a.checkInTime,
+          "Link Tanda Tangan (Drive Thumbs)": a.signatureUrl,
+        }));
 
-      const ws = XLSX.utils.json_to_sheet(exportRows);
-      
-      // Set cell width patterns
-      const colWidths = [
-        { wch: 5 },  // No
-        { wch: 25 }, // Name
-        { wch: 22 }, // NIP
-        { wch: 30 }, // Instansi
-        { wch: 20 }, // Jabatan
-        { wch: 22 }, // Email
-        { wch: 20 }, // Date
-        { wch: 45 }, // Signature Links
-      ];
-      ws["!cols"] = colWidths;
+        const ws = XLSX.utils.json_to_sheet(exportRows);
+        
+        // Set cell width patterns
+        const colWidths = [
+          { wch: 5 },  // No
+          { wch: 25 }, // Name
+          { wch: 22 }, // NIP
+          { wch: 30 }, // Instansi
+          { wch: 20 }, // Jabatan
+          { wch: 22 }, // Email
+          { wch: 20 }, // Date
+          { wch: 45 }, // Signature Links
+        ];
+        ws["!cols"] = colWidths;
 
-      const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, "Daftar Kehadiran");
-      XLSX.writeFile(wb, `Laporan_Kehadiran_Peserta_${Date.now()}.xlsx`);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, "Daftar Kehadiran");
+        XLSX.writeFile(wb, `Laporan_Kehadiran_Peserta_${Date.now()}.xlsx`);
 
-      dismissToast(toastId);
-      showToast("Laporan Excel berhasil diunduh!", "success");
-    } catch (err: any) {
-      console.error("Gagal membuat Excel:", err);
-      dismissToast(toastId);
-      showToast(`Gagal membuat Excel: ${err.message || err}`, "error");
-    }
+        dismissToast(toastId);
+        showToast("Laporan Excel berhasil diunduh!", "success");
+      } catch (err: any) {
+        console.error("Gagal membuat Excel:", err);
+        dismissToast(toastId);
+        showToast(`Gagal membuat Excel: ${err.message || err}`, "error");
+      } finally {
+        setIsExportingExcel(false);
+      }
+    }, 150);
   };
 
   // PDF Export using jsPDF AutoTable
@@ -761,12 +879,50 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
         }
       });
 
-      setPdfProgressText("Menyimpan file...");
-      updateToast(toastId, { message: "Menyimpan file laporan..." });
-      doc.save(`Laporan_Kehadiran_Peserta_${Date.now()}.pdf`);
+      setPdfProgressText("Menyimpan & Mencetak file...");
+      updateToast(toastId, { message: "Menyimpan file laporan dan memicu dialog cetak..." });
+      
+      // Configure print integration with jsPDF autoPrint
+      doc.autoPrint();
+      
+      // Save local downloaded file
+      const filename = `Laporan_Kehadiran_Peserta_${Date.now()}.pdf`;
+      doc.save(filename);
+
+      // Trigger automatic browser printing using a temporary hidden iframe
+      try {
+        const blob = doc.output("blob");
+        const blobUrl = URL.createObjectURL(blob);
+        const printIframe = document.createElement("iframe");
+        printIframe.style.position = "fixed";
+        printIframe.style.width = "0";
+        printIframe.style.height = "0";
+        printIframe.style.opacity = "0";
+        printIframe.style.border = "none";
+        printIframe.src = blobUrl;
+        document.body.appendChild(printIframe);
+
+        printIframe.onload = () => {
+          try {
+            printIframe.contentWindow?.focus();
+            printIframe.contentWindow?.print();
+          } catch (printErr) {
+            console.warn("Gagal memicu dialog cetak browser otomatis:", printErr);
+          }
+          // Safely clean up reference and blob memory after dialog initiation
+          setTimeout(() => {
+            try {
+              document.body.removeChild(printIframe);
+              URL.revokeObjectURL(blobUrl);
+            } catch (e) {}
+          }, 60000);
+        };
+      } catch (e) {
+        console.warn("Printing to invisible iframe failed:", e);
+      }
       
       dismissToast(toastId);
-      showToast("Laporan PDF berhasil diunduh!", "success");
+      showToast("Laporan PDF berhasil diunduh & dialog cetak dipicu!", "success");
     } catch (err: any) {
       console.error("Gagal membuat PDF:", err);
       dismissToast(toastId);
@@ -827,8 +983,24 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
     }
   };
 
+  const handleSaveTarget = () => {
+    const value = parseInt(tempTarget, 10);
+    if (!isNaN(value) && value > 0) {
+      setAttendanceTarget(value);
+      localStorage.setItem("admin_attendance_target", value.toString());
+      setIsEditingTarget(false);
+      showToast(`Target kehadiran diset ke ${value} peserta.`, "success");
+    } else {
+      showToast("Target harus berupa angka positif!", "warning");
+    }
+  };
+
   const handleDeleteAttendee = async () => {
     if (!deletingAttendee) return;
+
+    // Remove deleted attendee's key from tracked set so they can check-in again
+    const deKey = `${(deletingAttendee.nip || "").trim().toLowerCase()}_${(deletingAttendee.name || "").trim().toLowerCase()}`;
+    seenAttendeeKeysRef.current.delete(deKey);
 
     setIsDeleting(true);
     const toastId = showToast("Menghapus data peserta...", "loading", 0);
@@ -893,15 +1065,49 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
     }
   };
 
-  // Filter attendees by query
+  // Filter attendees by query and date range
   const filteredAttendees = attendees.filter((a) => {
+    // 1. Search filter
     const q = searchQuery.toLowerCase();
-    return (
+    const matchesSearch = (
       a.name.toLowerCase().includes(q) ||
       a.instansi.toLowerCase().includes(q) ||
       a.nip.toLowerCase().includes(q) ||
       a.jabatan.toLowerCase().includes(q)
     );
+    if (!matchesSearch) return false;
+
+    // 2. Date filters
+    if (startDateFilter || endDateFilter) {
+      if (!a.checkInTime) return false;
+      
+      const checkInDateOnly = a.checkInTime.trim().split(/[ T]/)[0]; // "YYYY-MM-DD"
+      
+      if (checkInDateOnly && checkInDateOnly.length >= 10) {
+        const formattedDate = checkInDateOnly.substring(0, 10);
+        if (startDateFilter && formattedDate < startDateFilter) {
+          return false;
+        }
+        if (endDateFilter && formattedDate > endDateFilter) {
+          return false;
+        }
+      } else {
+        try {
+          const checkInDate = new Date(a.checkInTime);
+          if (startDateFilter) {
+            const startD = new Date(startDateFilter + "T00:00:00");
+            if (checkInDate < startD) return false;
+          }
+          if (endDateFilter) {
+            const endD = new Date(endDateFilter + "T23:59:59");
+            if (checkInDate > endD) return false;
+          }
+        } catch (e) {
+          return false;
+        }
+      }
+    }
+    return true;
   });
 
   // Calculate statistics for visualization
@@ -1593,68 +1799,262 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
           </div>
         </motion.div>
       )}
+      {/* Numerical Stats Widgets with Interactive Summary and Sparklines */}
+      {(() => {
+        const now = new Date();
+        const pad = (num: number) => String(num).padStart(2, "0");
+        const todayStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+        const currentMonthStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}`;
+        
+        // Month name mapper in Indonesia
+        const monthsIndo = [
+          "Januari", "Februari", "Maret", "April", "Mei", "Juni",
+          "Juli", "Agustus", "September", "Oktober", "November", "Desember"
+        ];
+        const monthName = monthsIndo[now.getMonth()];
+        const todayDateFormatted = `${now.getDate()} ${monthName}`;
+        const monthYearFormatted = `${monthName} ${now.getFullYear()}`;
 
-      {/* Numerical Stats Widgets */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        {/* Total stats */}
-        <div className="bg-white p-5 rounded-xl border border-slate-150/60 shadow-sm flex items-center justify-between">
-          <div>
-            <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider block">Total Peserta Hadir</span>
-            <span className="text-3xl font-extrabold text-slate-800 mt-1 block">{stats.totalCount}</span>
-          </div>
-          <div className="w-12 h-12 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center">
-            <Users className="w-6 h-6" />
-          </div>
-        </div>
+        const todayAttendees = attendees.filter((a) => a.checkInTime && a.checkInTime.trim().startsWith(todayStr));
+        const monthAttendees = attendees.filter((a) => a.checkInTime && a.checkInTime.trim().startsWith(currentMonthStr));
 
-        {/* Total unique institutions */}
-        <div className="bg-white p-5 rounded-xl border border-slate-150/60 shadow-sm flex items-center justify-between">
-          <div>
-            <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider block">Instansi Terdaftar</span>
-            <span className="text-3xl font-extrabold text-slate-800 mt-1 block">
-              {attendees.reduce((acc, current) => {
-                const inst = current.instansi.trim().toLowerCase();
-                if (inst && !acc.includes(inst)) acc.push(inst);
-                return acc;
-              }, [] as string[]).length}
-            </span>
-          </div>
-          <div className="w-12 h-12 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center">
-            <School className="w-6 h-6" />
-          </div>
-        </div>
+        const todayCount = todayAttendees.length;
+        const monthCount = monthAttendees.length;
+        
+        // Target calculation
+        const percentage = attendanceTarget > 0 ? Math.round((attendees.length / attendanceTarget) * 100) : 0;
 
-        {/* Integration details */}
-        <div className="bg-white p-5 rounded-xl border border-slate-150/60 shadow-sm flex items-center justify-between">
-          <div className="space-y-1 text-xs text-slate-500 w-full">
-            <span className="font-semibold text-slate-800 flex items-center gap-1">
-              <Settings className="w-3.5 h-3.5 text-slate-500" /> Integrasi Cloud Aktif:
-            </span>
-            <div className="flex items-center justify-between text-[10px] bg-slate-50 p-1.5 rounded">
-              <span className="font-medium text-slate-600">Spreadsheet</span>
-              <a
-                href={`https://docs.google.com/spreadsheets/d/${spreadsheetId}`}
-                target="_blank"
-                rel="no-referrer"
-                className="text-emerald-600 font-semibold hover:underline flex items-center gap-0.5"
-              >
-                Buka Excel <ExternalLink className="w-2.5 h-2.5" />
-              </a>
+        // Custom tooltip for Sparklines
+        const CustomSparklineTooltip = ({ active, payload }: any) => {
+          if (active && payload && payload.length) {
+            return (
+              <div className="bg-slate-900/90 text-[10px] text-white px-2 py-0.5 rounded shadow border border-slate-700/50 font-sans font-medium">
+                {payload[0].value} Hadir
+              </div>
+            );
+          }
+          return null;
+        };
+
+        // Today hourly sparkline (group into 2-hourly periods for rendering)
+        const hoursList = ["08:00", "10:00", "12:00", "14:00", "16:00", "18:00"];
+        const todayHours: Record<string, number> = {};
+        hoursList.forEach(h => { todayHours[h] = 0; });
+        todayAttendees.forEach(a => {
+          try {
+            const parts = a.checkInTime.split(" ")[1];
+            if (parts) {
+              const hr = parseInt(parts.split(":")[0], 10);
+              if (hr < 10) todayHours["08:00"]++;
+              else if (hr < 12) todayHours["10:00"]++;
+              else if (hr < 14) todayHours["12:00"]++;
+              else if (hr < 16) todayHours["14:00"]++;
+              else if (hr < 18) todayHours["16:00"]++;
+              else todayHours["18:00"]++;
+            }
+          } catch(e){}
+        });
+        const todaySparkData = hoursList.map(h => ({ name: h, count: todayHours[h] }));
+
+        // Month weekly sparkline
+        const weeksList = ["Mg-1", "Mg-2", "Mg-3", "Mg-4"];
+        const monthWeeks: Record<string, number> = { "Mg-1": 0, "Mg-2": 0, "Mg-3": 0, "Mg-4": 0 };
+        monthAttendees.forEach(a => {
+          try {
+            const datePart = a.checkInTime.split(" ")[0];
+            const day = parseInt(datePart.split("-")[2], 10);
+            if (day <= 7) monthWeeks["Mg-1"]++;
+            else if (day <= 14) monthWeeks["Mg-2"]++;
+            else if (day <= 21) monthWeeks["Mg-3"]++;
+            else monthWeeks["Mg-4"]++;
+          } catch(e){}
+        });
+        const monthSparkData = weeksList.map(w => ({ name: w, count: monthWeeks[w] }));
+
+        // Target Recharts donut slices
+        const targetPercentData = [
+          { name: "Sesuai Target", value: Math.min(attendees.length, attendanceTarget), color: "#6366f1" },
+          { name: "Sisa Target", value: Math.max(0, attendanceTarget - attendees.length), color: "#f1f5f9" }
+        ];
+
+        return (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            {/* Card 1: Today's Attendance */}
+            <div className="bg-white p-5 rounded-2xl border border-slate-150/60 shadow-sm flex flex-col justify-between h-[124px] relative overflow-hidden transition-all hover:shadow-md hover:border-indigo-100 group">
+              <div className="flex items-start justify-between">
+                <div>
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Kehadiran Hari Ini</span>
+                  <span className="text-3xl font-extrabold text-slate-800 mt-1 block tracking-tight group-hover:text-indigo-600 transition-colors">{todayCount}</span>
+                </div>
+                <div className="w-9 h-9 rounded-xl bg-indigo-50 text-indigo-500 flex items-center justify-center transition-transform group-hover:scale-105 duration-300">
+                  <CalendarCheck2 className="w-4 h-4" />
+                </div>
+              </div>
+              <div className="flex items-end justify-between mt-auto">
+                <span className="text-[10.5px] font-medium text-slate-400 block">{todayDateFormatted}</span>
+                {/* Recharts Mini sparkline area chart */}
+                <div className="w-[110px] h-[36px] -mb-1 select-none">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart data={todaySparkData} margin={{ top: 2, right: 2, left: 2, bottom: 2 }}>
+                      <defs>
+                        <linearGradient id="colorTodayGrad" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#6366f1" stopOpacity={0.25}/>
+                          <stop offset="95%" stopColor="#6366f1" stopOpacity={0}/>
+                        </linearGradient>
+                      </defs>
+                      <Area type="monotone" dataKey="count" stroke="#6366f1" strokeWidth={1.5} fillOpacity={1} fill="url(#colorTodayGrad)" />
+                      <Tooltip content={<CustomSparklineTooltip />} cursor={false} />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
             </div>
-            <div className="flex items-center justify-between text-[10px] bg-slate-50 p-1.5 rounded">
-              <span className="font-medium text-slate-600">Tanda Tangan</span>
-              <a
-                href={`https://drive.google.com/drive/folders/${driveFolderId}`}
-                target="_blank"
-                rel="no-referrer"
-                className="text-emerald-600 font-semibold hover:underline flex items-center gap-0.5"
-              >
-                Buka Folder <ExternalLink className="w-2.5 h-2.5" />
-              </a>
+
+            {/* Card 2: This Month's Attendance */}
+            <div className="bg-white p-5 rounded-2xl border border-slate-150/60 shadow-sm flex flex-col justify-between h-[124px] relative overflow-hidden transition-all hover:shadow-md hover:border-emerald-100 group">
+              <div className="flex items-start justify-between">
+                <div>
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Peserta Bulan Ini</span>
+                  <span className="text-3xl font-extrabold text-slate-800 mt-1 block tracking-tight group-hover:text-emerald-600 transition-colors">{monthCount}</span>
+                </div>
+                <div className="w-9 h-9 rounded-xl bg-emerald-50 text-emerald-500 flex items-center justify-center transition-transform group-hover:scale-105 duration-300">
+                  <Calendar className="w-4 h-4" />
+                </div>
+              </div>
+              <div className="flex items-end justify-between mt-auto">
+                <span className="text-[10.5px] font-medium text-slate-400 block">{monthYearFormatted}</span>
+                {/* Recharts Mini sparkline bar chart */}
+                <div className="w-[110px] h-[36px] -mb-1 select-none">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={monthSparkData} margin={{ top: 2, right: 2, left: 2, bottom: 2 }}>
+                      <Bar dataKey="count" fill="#10b981" radius={[2, 2, 0, 0]} barSize={12} />
+                      <Tooltip content={<CustomSparklineTooltip />} cursor={false} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            </div>
+
+            {/* Card 3: Attendance percentage compared to target */}
+            <div className="bg-white p-5 rounded-2xl border border-slate-150/60 shadow-sm flex flex-col justify-between h-[124px] relative overflow-hidden transition-all hover:shadow-md hover:border-violet-100 group">
+              <div className="flex items-start justify-between">
+                <div>
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Pencapaian Target</span>
+                  <span className="text-3xl font-extrabold text-slate-800 mt-1 block tracking-tight">{percentage}%</span>
+                </div>
+                
+                {/* Circular Donut Recharts Progress */}
+                <div className="w-[48px] h-[48px] relative flex items-center justify-center select-none shrink-0">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie
+                        data={targetPercentData}
+                        cx="50%"
+                        cy="50%"
+                        innerRadius={15}
+                        outerRadius={22}
+                        paddingAngle={1}
+                        dataKey="value"
+                        startAngle={90}
+                        endAngle={-270}
+                      >
+                        {targetPercentData.map((entry, index) => (
+                          <Cell key={`cell-${index}`} fill={entry.color} />
+                        ))}
+                      </Pie>
+                    </PieChart>
+                  </ResponsiveContainer>
+                  <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                    <span className="text-[8.5px] font-extrabold text-indigo-600">{Math.min(999, percentage)}%</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between mt-auto">
+                {isEditingTarget ? (
+                  <div className="flex items-center gap-1 bg-slate-50 border border-indigo-200 px-1.5 py-1 rounded-lg">
+                    <input
+                      type="number"
+                      value={tempTarget}
+                      onChange={(e) => setTempTarget(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') handleSaveTarget();
+                        if (e.key === 'Escape') setIsEditingTarget(false);
+                      }}
+                      className="w-12 bg-white px-1 py-0.5 border border-slate-300 focus:outline-none focus:ring-1 focus:ring-indigo-500 rounded text-center text-[11px] font-bold text-slate-800"
+                      autoFocus
+                    />
+                    <button
+                      onClick={handleSaveTarget}
+                      className="p-1 bg-emerald-500 hover:bg-emerald-600 text-white rounded-md cursor-pointer transition-colors flex items-center justify-center"
+                      title="Simpan"
+                    >
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      onClick={() => setIsEditingTarget(false)}
+                      className="p-1 bg-slate-200 hover:bg-slate-300 text-slate-600 rounded-md cursor-pointer transition-colors flex items-center justify-center"
+                      title="Batal"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-1 text-[11px] text-slate-500 font-medium">
+                    <span>Target: <strong className="text-slate-800">{attendanceTarget}</strong></span>
+                    <button
+                      onClick={() => {
+                        setTempTarget(attendanceTarget.toString());
+                        setIsEditingTarget(true);
+                      }}
+                      className="p-1 hover:bg-slate-100 text-indigo-600 hover:text-indigo-800 rounded-md transition duration-200 cursor-pointer"
+                      title="Ubah Target"
+                    >
+                      <Pencil className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                )}
+                <span className="text-[10px] text-slate-400 font-semibold uppercase">{attendees.length} / {attendanceTarget}</span>
+              </div>
+            </div>
+
+            {/* Card 4: Cloud Integration Summary */}
+            <div className="bg-white p-5 rounded-2xl border border-slate-150/60 shadow-sm flex flex-col justify-between h-[124px] relative overflow-hidden transition-all hover:shadow-md group">
+              <div className="space-y-1.5 text-xs text-slate-500 w-full">
+                <span className="font-semibold text-slate-700 flex items-center gap-1 text-[11px]">
+                  <Settings className="w-3.5 h-3.5 text-indigo-500" /> Cloud Sync:
+                </span>
+                <div className="flex items-center justify-between text-[10px] bg-slate-50 hover:bg-slate-100/80 p-1.5 rounded-lg border border-slate-100 transition-colors">
+                  <span className="font-medium text-slate-500">Spreadsheet</span>
+                  <a
+                    href={`https://docs.google.com/spreadsheets/d/${spreadsheetId}`}
+                    target="_blank"
+                    rel="no-referrer"
+                    className="text-emerald-600 font-semibold hover:underline flex items-center gap-0.5"
+                  >
+                    Buka Excel <ExternalLink className="w-2.5 h-2.5" />
+                  </a>
+                </div>
+                <div className="flex items-center justify-between text-[10px] bg-slate-50 hover:bg-slate-100/80 p-1.5 rounded-lg border border-slate-100 transition-colors">
+                  <span className="font-medium text-slate-500">Tanda Tangan</span>
+                  <a
+                    href={`https://drive.google.com/drive/folders/${driveFolderId}`}
+                    target="_blank"
+                    rel="no-referrer"
+                    className="text-emerald-600 font-semibold hover:underline flex items-center gap-0.5"
+                  >
+                    Buka Folder <ExternalLink className="w-2.5 h-2.5" />
+                  </a>
+                </div>
+              </div>
+              <div className="flex items-center justify-between text-[10.5px] mt-2 border-t border-slate-50 pt-1.5">
+                <span className="font-bold text-slate-400 select-none">TOTAL HADIR</span>
+                <span className="font-extrabold text-slate-800">{stats.totalCount} Orang</span>
+              </div>
             </div>
           </div>
-        </div>
-      </div>
+        );
+      })()}
 
       {/* Visual Analytics Charts */}
       {attendees.length > 0 && (
@@ -1810,19 +2210,33 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
             {/* Export buttons */}
             <button
               onClick={exportToExcel}
-              className="bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 px-3 py-1.5 rounded-lg text-xs font-semibold cursor-pointer flex items-center gap-1"
+              disabled={isExportingExcel || isExportingPdf}
+              className={`bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1 transition-all ${
+                isExportingExcel ? "opacity-75 cursor-wait" : "hover:scale-[1.01] active:scale-[0.99] cursor-pointer"
+              }`}
               title="Download format Excel"
             >
-              <Download className="w-3.5 h-3.5" /> Excel
+              {isExportingExcel ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Download className="w-3.5 h-3.5" />
+              )}
+              {isExportingExcel ? "Mengekspor..." : "Excel"}
             </button>
             <button
               onClick={() => setShowPdfOptions(true)}
-              disabled={isExportingPdf}
-              className={`bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200 px-3.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition ${isExportingPdf ? "opacity-75 cursor-wait" : "cursor-pointer"}`}
+              disabled={isExportingPdf || isExportingExcel}
+              className={`bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200 px-3.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all ${
+                isExportingPdf ? "opacity-75 cursor-wait" : "hover:scale-[1.01] active:scale-[0.99] cursor-pointer"
+              }`}
               title="Unduh Laporan PDF Cetak"
             >
-              <FileDown className={`w-3.5 h-3.5 ${isExportingPdf ? "animate-spin" : ""}`} />
-              {isExportingPdf ? pdfProgressText : "Unduh Laporan PDF"}
+              {isExportingPdf ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <FileDown className="w-3.5 h-3.5" />
+              )}
+              {isExportingPdf ? pdfProgressText || "Mengolah PDF..." : "Unduh Laporan PDF"}
             </button>
 
             {/* Clean data button */}
@@ -1832,6 +2246,94 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
               title="Kosongkan Database Absensi"
             >
               <Trash2 className="w-3.5 h-3.5" /> Bersihkan
+            </button>
+          </div>
+        </div>
+
+        {/* Date Filter & Advanced Filters Row */}
+        <div className="px-5 py-3.5 border-b border-slate-100 bg-slate-50/40 flex flex-col lg:flex-row lg:items-center justify-between gap-4 text-xs text-slate-600 transition-all duration-300">
+          <div className="flex flex-wrap items-center gap-3 w-full lg:w-auto">
+            <span className="font-bold text-slate-700 flex items-center gap-1.5 shrink-0">
+              <Filter className="w-3.5 h-3.5 text-indigo-600" />
+              Filter Tanggal Kehadiran :
+            </span>
+            
+            {/* Start Date */}
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] font-semibold text-slate-500 flex items-center gap-1">
+                <Calendar className="w-3.5 h-3.5 text-slate-400" />
+                Mulai:
+              </span>
+              <input
+                type="date"
+                value={startDateFilter}
+                onChange={(e) => setStartDateFilter(e.target.value)}
+                className="px-2.5 py-1.5 border border-slate-200 hover:border-slate-350 focus:border-indigo-500 bg-white rounded-xl text-xs focus:ring-4 focus:ring-indigo-100 focus:outline-none transition-all duration-200 text-slate-700 font-semibold shadow-sm cursor-pointer"
+              />
+            </div>
+
+            {/* End Date */}
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] font-semibold text-slate-500 flex items-center gap-1">
+                <Calendar className="w-3.5 h-3.5 text-slate-400" />
+                Sampai:
+              </span>
+              <input
+                type="date"
+                value={endDateFilter}
+                onChange={(e) => setEndDateFilter(e.target.value)}
+                className="px-2.5 py-1.5 border border-slate-200 hover:border-slate-350 focus:border-indigo-500 bg-white rounded-xl text-xs focus:ring-4 focus:ring-indigo-100 focus:outline-none transition-all duration-200 text-slate-700 font-semibold shadow-sm cursor-pointer"
+              />
+            </div>
+
+            {/* Reset Button */}
+            {(startDateFilter || endDateFilter) && (
+              <button
+                type="button"
+                onClick={() => {
+                  setStartDateFilter("");
+                  setEndDateFilter("");
+                }}
+                className="bg-rose-50 hover:bg-rose-100 text-rose-600 hover:text-rose-700 border border-rose-100 hover:border-rose-200 px-3 py-1.5 rounded-xl text-xs font-semibold cursor-pointer transition-all duration-200 flex items-center gap-1 shadow-sm shrink-0 font-mono text-[10.5px]"
+                title="Hapus filter tanggal"
+              >
+                <X className="w-3 h-3" /> Hapus Filter Tanggal
+              </button>
+            )}
+          </div>
+
+          {/* Quick presets */}
+          <div className="flex flex-wrap items-center gap-1.5 select-none self-start lg:self-auto shrink-0">
+            <span className="text-[10px] uppercase tracking-wider text-slate-400 font-bold mr-1">Preset Cepat:</span>
+            <button
+              type="button"
+              onClick={() => {
+                const todayStr = new Date().toLocaleDateString("sv-SE"); // Returns YYYY-MM-DD locally
+                setStartDateFilter(todayStr);
+                setEndDateFilter(todayStr);
+              }}
+              className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-100 px-3 py-1.5 rounded-xl text-[10.5px] font-bold cursor-pointer transition-all duration-200"
+            >
+              Hari Ini
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                const now = new Date();
+                const day = now.getDay();
+                const monday = new Date(now);
+                monday.setDate(now.getDate() - (day === 0 ? 6 : day - 1));
+                const mondayStr = monday.toLocaleDateString("sv-SE");
+                const sunday = new Date(monday);
+                sunday.setDate(monday.getDate() + 6);
+                const sundayStr = sunday.toLocaleDateString("sv-SE");
+
+                setStartDateFilter(mondayStr);
+                setEndDateFilter(sundayStr);
+              }}
+              className="bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 px-3 py-1.5 rounded-xl text-[10.5px] font-bold cursor-pointer transition-all duration-200"
+            >
+              Minggu Ini
             </button>
           </div>
         </div>

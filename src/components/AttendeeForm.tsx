@@ -10,23 +10,28 @@ interface AttendeeFormProps {
 
 const slideVariants = {
   enter: (direction: number) => ({
-    x: direction > 0 ? 40 : -40,
+    x: direction > 0 ? 60 : -60,
     opacity: 0,
+    scale: 0.97,
   }),
   center: {
     x: 0,
     opacity: 1,
+    scale: 1,
     transition: {
-      x: { type: "spring", stiffness: 380, damping: 30 },
-      opacity: { duration: 0.2 },
+      x: { type: "spring", stiffness: 300, damping: 26 },
+      opacity: { duration: 0.22 },
+      scale: { duration: 0.22, ease: "easeOut" }
     },
   },
   exit: (direction: number) => ({
-    x: direction < 0 ? 40 : -40,
+    x: direction < 0 ? 60 : -60,
     opacity: 0,
+    scale: 0.97,
     transition: {
-      x: { type: "spring", stiffness: 380, damping: 30 },
-      opacity: { duration: 0.15 },
+      x: { type: "spring", stiffness: 300, damping: 26 },
+      opacity: { duration: 0.18 },
+      scale: { duration: 0.18, ease: "easeIn" }
     },
   }),
 };
@@ -412,23 +417,32 @@ export default function AttendeeForm({ onSuccess, sessionActive }: AttendeeFormP
             disabled={step === 1}
             className="flex flex-col items-center group cursor-pointer disabled:cursor-default"
           >
-            <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs transition-all duration-350 ${
-              step === 1 
-                ? "bg-indigo-600 text-white ring-4 ring-indigo-100 shadow-md" 
-                : step > 1 
-                  ? "bg-emerald-500 text-white group-hover:bg-emerald-600" 
-                  : "bg-slate-100 text-slate-400 border border-slate-200"
-            }`}>
+            <motion.div 
+              animate={{ scale: step === 1 ? 1.08 : 1 }}
+              transition={{ type: "spring", stiffness: 300, damping: 20 }}
+              className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs transition-colors duration-350 ${
+                step === 1 
+                  ? "bg-indigo-600 text-white ring-4 ring-indigo-100 shadow-md" 
+                  : step > 1 
+                    ? "bg-emerald-500 text-white group-hover:bg-emerald-600" 
+                    : "bg-slate-100 text-slate-400 border border-slate-200"
+              }`}
+            >
               {step > 1 ? <Check className="w-4 h-4" /> : "1"}
-            </div>
+            </motion.div>
             <span className={`text-[10px] font-bold mt-1.5 uppercase tracking-wider transition-colors duration-300 ${
               step === 1 ? "text-indigo-600" : "text-slate-400"
             }`}>Profil</span>
           </button>
 
           {/* Line 1 */}
-          <div className="flex-1 h-0.5 bg-slate-100 mx-3 -mt-5">
-            <div className="h-full bg-indigo-600 transition-all duration-350" style={{ width: step > 1 ? "100%" : "0%" }}></div>
+          <div className="flex-1 h-0.5 bg-slate-100 mx-3 -mt-5 relative">
+            <motion.div 
+              className="absolute left-0 top-0 h-full bg-indigo-600"
+              initial={{ width: "0%" }}
+              animate={{ width: step > 1 ? "100%" : "0%" }}
+              transition={{ duration: 0.35, ease: "easeInOut" }}
+            />
           </div>
 
           {/* Step 2 */}
@@ -438,34 +452,47 @@ export default function AttendeeForm({ onSuccess, sessionActive }: AttendeeFormP
             disabled={step === 2 || (step === 1 && !(name.trim() && instansi.trim() && nip.trim() && jabatan.trim()))}
             className="flex flex-col items-center group cursor-pointer disabled:cursor-default"
           >
-            <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs transition-all duration-350 ${
-              step === 2 
-                ? "bg-indigo-600 text-white ring-4 ring-indigo-100 shadow-md" 
-                : step > 2 
-                  ? "bg-emerald-500 text-white group-hover:bg-emerald-600" 
-                  : "bg-slate-100 text-slate-400 border border-slate-200"
-            }`}>
+            <motion.div 
+              animate={{ scale: step === 2 ? 1.08 : 1 }}
+              transition={{ type: "spring", stiffness: 300, damping: 20 }}
+              className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs transition-colors duration-350 ${
+                step === 2 
+                  ? "bg-indigo-600 text-white ring-4 ring-indigo-100 shadow-md" 
+                  : step > 2 
+                    ? "bg-emerald-500 text-white group-hover:bg-emerald-600" 
+                    : "bg-slate-100 text-slate-400 border border-slate-200"
+              }`}
+            >
               {step > 2 ? <Check className="w-4 h-4" /> : "2"}
-            </div>
+            </motion.div>
             <span className={`text-[10px] font-bold mt-1.5 uppercase tracking-wider transition-colors duration-300 ${
               step === 2 ? "text-indigo-600" : "text-slate-400"
             }`}>Tanda Tangan</span>
           </button>
 
           {/* Line 2 */}
-          <div className="flex-1 h-0.5 bg-slate-100 mx-3 -mt-5">
-            <div className="h-full bg-indigo-600 transition-all duration-350" style={{ width: step > 2 ? "100%" : "0%" }}></div>
+          <div className="flex-1 h-0.5 bg-slate-100 mx-3 -mt-5 relative">
+            <motion.div 
+              className="absolute left-0 top-0 h-full bg-indigo-600"
+              initial={{ width: "0%" }}
+              animate={{ width: step > 2 ? "100%" : "0%" }}
+              transition={{ duration: 0.35, ease: "easeInOut" }}
+            />
           </div>
 
           {/* Step 3 */}
           <div className="flex flex-col items-center">
-            <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs transition-all duration-350 ${
-              step === 3 
-                ? "bg-indigo-600 text-white ring-4 ring-indigo-100 shadow-md" 
-                : "bg-slate-100 text-slate-400 border border-slate-200"
-            }`}>
+            <motion.div 
+              animate={{ scale: step === 3 ? 1.08 : 1 }}
+              transition={{ type: "spring", stiffness: 300, damping: 20 }}
+              className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs transition-colors duration-350 ${
+                step === 3 
+                  ? "bg-indigo-600 text-white ring-4 ring-indigo-100 shadow-md" 
+                  : "bg-slate-100 text-slate-400 border border-slate-200"
+              }`}
+            >
               3
-            </div>
+            </motion.div>
             <span className={`text-[10px] font-bold mt-1.5 uppercase tracking-wider transition-colors duration-300 ${
               step === 3 ? "text-indigo-600" : "text-slate-400"
             }`}>Konfirmasi</span>
@@ -604,14 +631,16 @@ export default function AttendeeForm({ onSuccess, sessionActive }: AttendeeFormP
                 </div>
               </div>
 
-              <button
+              <motion.button
                 type="button"
+                whileHover={{ scale: 1.015 }}
+                whileTap={{ scale: 0.985 }}
                 onClick={handleNextToStep2}
                 className="w-full mt-6 bg-indigo-600 hover:bg-indigo-700 active:scale-[99] text-white font-bold py-3.5 px-5 rounded-xl text-xs sm:text-sm transition-all flex items-center justify-center gap-2 cursor-pointer shadow-md shadow-indigo-600/10"
               >
                 <span>Lanjut ke Tanda Tangan</span>
                 <ChevronRight className="w-4 h-4" />
-              </button>
+              </motion.button>
             </motion.div>
           )}
 
@@ -643,22 +672,26 @@ export default function AttendeeForm({ onSuccess, sessionActive }: AttendeeFormP
               </div>
 
               <div className="flex gap-3 mt-6">
-                <button
+                <motion.button
                   type="button"
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
                   onClick={handleBackToStep1}
                   className="flex-1 bg-slate-50 hover:bg-slate-100 text-slate-700 font-bold py-3.5 px-4 rounded-xl text-xs sm:text-sm border border-slate-200 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
                 >
                   <ChevronLeft className="w-4 h-4" />
                   <span>Ubah Identitas</span>
-                </button>
-                <button
+                </motion.button>
+                <motion.button
                   type="button"
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
                   onClick={handleNextToStep3}
                   className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3.5 px-4 rounded-xl text-xs sm:text-sm transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-md shadow-indigo-600/10"
                 >
                   <span>Lanjut Konfirmasi</span>
                   <ChevronRight className="w-4 h-4" />
-                </button>
+                </motion.button>
               </div>
             </motion.div>
           )}
@@ -752,18 +785,22 @@ export default function AttendeeForm({ onSuccess, sessionActive }: AttendeeFormP
 
               {/* Actions Footer */}
               <div className="flex flex-col sm:flex-row gap-3 pt-2">
-                <button
+                <motion.button
                   type="button"
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
                   onClick={handleBackToStep2}
                   disabled={isSubmitting}
                   className="sm:order-1 flex-1 bg-slate-50 hover:bg-slate-100 text-slate-700 font-bold py-3.5 px-4 rounded-xl text-xs sm:text-sm border border-slate-200 transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <ChevronLeft className="w-4 h-4" />
                   <span>Kembali</span>
-                </button>
+                </motion.button>
                 
-                <button
+                <motion.button
                   type="button"
+                  whileHover={isSubmitting ? {} : { scale: 1.015 }}
+                  whileTap={isSubmitting ? {} : { scale: 0.985 }}
                   onClick={handleSubmit}
                   disabled={isSubmitting}
                   className="sm:order-2 flex-[2] bg-indigo-600 hover:bg-indigo-700 active:scale-[99] text-white font-bold py-3.5 px-5 rounded-xl text-xs sm:text-sm transition-all flex items-center justify-center gap-2 cursor-pointer disabled:bg-slate-300 disabled:cursor-not-allowed shadow-md shadow-indigo-600/10"
@@ -779,7 +816,7 @@ export default function AttendeeForm({ onSuccess, sessionActive }: AttendeeFormP
                       <span>Hadir &amp; Kirim Absen</span>
                     </>
                   )}
-                </button>
+                </motion.button>
               </div>
             </motion.div>
           )}
