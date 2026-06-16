@@ -1607,39 +1607,39 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
     <div className="space-y-6">
       {/* Header controls */}
       <div 
-        className="flex flex-col lg:flex-row gap-4 items-start lg:items-center justify-between text-white p-6 rounded-2xl shadow-xl bg-cover bg-center bg-no-repeat relative"
+        className="flex flex-col lg:flex-row gap-4 items-start lg:items-center justify-between text-white p-6 rounded-2xl shadow-xl bg-cover bg-center bg-no-repeat relative border border-slate-700/40"
         style={{
-          backgroundImage: `linear-gradient(to bottom, rgba(15, 23, 42, 0.88), rgba(15, 23, 42, 0.94)), url('https://i.ibb.co.com/V0HgY1Th/Chat-GPT-Image-Jun-16-2026-07-36-56-PM.png')`
+          backgroundImage: `linear-gradient(135deg, rgba(8, 20, 52, 0.91) 0%, rgba(12, 38, 76, 0.93) 50%, rgba(15, 23, 42, 0.96) 100%), url('https://i.ibb.co.com/V0HgY1Th/Chat-GPT-Image-Jun-16-2026-07-36-56-PM.png')`
         }}
       >
         <div>
           <div className="flex items-center gap-2">
-            <h1 className="text-xl font-bold tracking-tight">Dashboard Pemantauan</h1>
-            <span className="bg-emerald-500 text-slate-950 font-bold px-2 py-0.5 rounded text-[10px] animate-pulse uppercase">
+            <h1 className="text-xl font-bold tracking-tight text-white drop-shadow-sm">Dashboard Pemantauan</h1>
+            <span className="bg-gradient-to-r from-emerald-500 to-teal-400 text-slate-950 font-extrabold px-2 py-0.5 rounded text-[10px] shadow-[0_0_10px_rgba(16,185,129,0.4)] animate-pulse uppercase">
               Live
             </span>
           </div>
           {dbStorageMode === "local" ? (
-            <p className="text-xs text-slate-300 mt-1 max-w-lg">
+            <p className="text-xs text-slate-300 mt-1 max-w-lg leading-relaxed">
               Menggunakan Mode Database Lokal Server (Tanpa Google Sheets). 
               Data kehadiran & tanda tangan terjamin sangat aman dan siap dinikmati atau diekspor ke Excel/PDF kapan saja.
             </p>
           ) : (
-            <p className="text-xs text-slate-300 mt-1 max-w-lg">
+            <p className="text-xs text-slate-300 mt-1 max-w-lg leading-relaxed">
               Terhubung ke Google Spreadsheet dan folder Google Drive secara interaktif. 
               Menampilkan data peserta secara instan dan akurat.
             </p>
           )}
           {lastSynced && dbStorageMode !== "local" && (
-            <p className="text-[10px] text-emerald-400 mt-1 flex items-center gap-1">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 self-center"></span>
+            <p className="text-[10px] text-emerald-400 mt-1 flex items-center gap-1 font-medium">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 self-center animate-ping"></span>
               Sinkronisasi Terakhir: {lastSynced} (setiap 10s otomatis)
             </p>
           )}
 
           {/* Real-time Status Panel */}
-          <div className="flex flex-wrap items-center gap-2.5 mt-3 pt-3 border-t border-slate-800/80">
-            <div className="flex items-center gap-1.5 bg-slate-800/60 border border-slate-700/60 h-7 px-2.5 rounded-lg text-[10px] font-semibold text-slate-300">
+          <div className="flex flex-wrap items-center gap-2.5 mt-3 pt-3 border-t border-slate-700/50">
+            <div className="flex items-center gap-1.5 bg-slate-950/40 backdrop-blur-xs border border-slate-700/40 h-7 px-2.5 rounded-lg text-[10px] font-semibold text-slate-300">
               <Users className="w-3.5 h-3.5 text-sky-400" />
               <span>Admin Aktif:</span>
               <span className="text-white font-extrabold bg-sky-500/20 px-1.5 py-0.5 rounded-md min-w-[16px] text-center" title="Jumlah admin yang sedang memantau halaman">{activeAdminCount} Sesi</span>
@@ -1647,7 +1647,7 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
 
             {dbStorageMode === "local" ? (
               <div 
-                className="flex items-center gap-1.5 bg-emerald-500/10 border border-emerald-500/25 h-7 px-2.5 rounded-lg text-[10px] font-bold text-emerald-400 cursor-help"
+                className="flex items-center gap-1.5 bg-emerald-500/10 backdrop-blur-xs border border-emerald-500/25 h-7 px-2.5 rounded-lg text-[10px] font-bold text-emerald-450 cursor-help"
                 title="Aplikasi berjalan stabil menggunakan mode database lokal di server Node.js"
               >
                 <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
@@ -1657,7 +1657,7 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
               </div>
             ) : (
               <div 
-                className={`flex items-center gap-1.5 bg-slate-800/60 border h-7 px-2.5 rounded-lg text-[10px] font-semibold transition-all relative group cursor-help ${
+                className={`flex items-center gap-1.5 bg-slate-950/40 backdrop-blur-xs border h-7 px-2.5 rounded-lg text-[10px] font-semibold transition-all relative group cursor-help ${
                   googleSpreadsheetStatus === "connected"
                     ? "border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/5"
                     : googleSpreadsheetStatus === "error"
@@ -1693,7 +1693,7 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
 
         <div className="flex flex-wrap gap-2.5 w-full lg:w-auto items-center">
           {/* Public session toggle as an elegant Switch */}
-          <div className="flex items-center gap-3 bg-slate-800 border border-slate-700/80 rounded-xl px-3.5 py-1.5 hover:bg-slate-750 transition-all">
+          <div className="flex items-center gap-3 bg-slate-950/40 backdrop-blur-md border border-slate-700/50 rounded-xl px-3.5 py-1.5 hover:bg-slate-900/50 transition-all">
             <div className="flex flex-col text-left">
               <span className="text-[9px] uppercase font-bold text-slate-400 tracking-wider">Sesi Absensi HP</span>
               <span className={`text-[11px] font-bold ${isSessionActive ? "text-emerald-400" : "text-amber-450"}`}>
@@ -1729,7 +1729,7 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
           {isSessionActive && (
             <button
               onClick={() => setShowQrModal(true)}
-              className="bg-slate-800 border border-slate-700 text-slate-200 hover:bg-slate-750 p-2.5 rounded-xl text-xs font-medium cursor-pointer flex items-center gap-1.5"
+              className="bg-slate-950/40 backdrop-blur-md border border-slate-700/50 text-slate-200 hover:bg-slate-900/50 p-2.5 rounded-xl text-xs font-semibold cursor-pointer flex items-center gap-1.5 transition-all"
               title="Tampilkan Kode QR Sesi Mandiri"
             >
               <QrCode className="w-4 h-4 text-emerald-400" /> Tampilkan QR
@@ -1739,7 +1739,7 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
           <button
             onClick={handleManualSync}
             disabled={isSyncingManually}
-            className="bg-slate-800 border border-slate-700 text-slate-200 hover:bg-slate-750 p-2.5 rounded-xl text-xs font-medium cursor-pointer flex items-center gap-1.5"
+            className="bg-slate-950/40 backdrop-blur-md border border-slate-700/50 text-slate-200 hover:bg-slate-900/50 p-2.5 rounded-xl text-xs font-semibold cursor-pointer flex items-center gap-1.5 transition-all"
             title="Sinkronkan data peserta secara manual dari Google Sheets"
           >
             <RefreshCw className={`w-4 h-4 text-emerald-400 ${isSyncingManually || isBackgroundFetching ? "animate-spin" : ""}`} /> 
@@ -1747,7 +1747,7 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
           </button>
 
           {/* Auto Refresh Real-Time Panel */}
-          <div className="bg-slate-800 border border-slate-700 p-1 rounded-xl flex items-center gap-1.5 text-xs font-medium text-slate-200">
+          <div className="bg-slate-950/40 backdrop-blur-md border border-slate-700/50 p-1.5 rounded-xl flex items-center gap-1.5 text-xs font-medium text-slate-200">
             <button
               onClick={() => {
                 const newVal = !isAutoRefreshEnabled;
@@ -1755,10 +1755,10 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
                 localStorage.setItem("admin_auto_refresh_enabled", String(newVal));
                 showToast(newVal ? `Auto-Refresh diaktifkan (${autoRefreshInterval}s)` : "Auto-Refresh dimatikan", "info", 1500);
               }}
-              className={`px-2 py-1.5 rounded-lg flex items-center gap-1.5 transition-all cursor-pointer ${
+              className={`px-2.5 py-1 rounded-lg flex items-center gap-1.5 transition-all cursor-pointer ${
                 isAutoRefreshEnabled 
-                  ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" 
-                  : "hover:bg-slate-700 text-slate-400 border border-transparent"
+                  ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30" 
+                  : "hover:bg-slate-800/40 text-slate-300 border border-transparent"
               }`}
               title="Aktifkan/Matikan Auto-Refresh Real-Time"
             >
@@ -1775,7 +1775,7 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
                   localStorage.setItem("admin_auto_refresh_interval", String(val));
                   showToast(`Interval auto-refresh diubah ke ${val} detik`, "info", 1500);
                 }}
-                className="bg-slate-900 border border-slate-700 text-slate-300 text-[11px] rounded-lg px-2 py-1 focus:outline-none focus:border-emerald-500 cursor-pointer"
+                className="bg-slate-950 border border-slate-700/60 text-emerald-400 font-bold text-[11px] rounded-lg px-2 py-1 focus:outline-none focus:border-emerald-500 cursor-pointer"
                 title="Pilih Interval Auto-Refresh"
               >
                 <option value="10">10 Detik</option>
@@ -1797,10 +1797,10 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
               setShowNotificationSettings(false);
               setShowFormRulesSettings(false);
             }}
-            className={`bg-slate-800 border ${showConfigSettings ? 'border-emerald-500 bg-slate-850' : 'border-slate-700'} text-slate-200 hover:bg-slate-750 p-2.5 rounded-xl text-xs font-medium cursor-pointer flex items-center gap-1.5`}
+            className={`bg-slate-950/40 backdrop-blur-md border ${showConfigSettings ? 'border-emerald-400 bg-emerald-500/15 text-emerald-300' : 'border-slate-700/50'} text-slate-200 hover:bg-slate-900/50 p-2.5 rounded-xl text-xs font-semibold cursor-pointer flex items-center gap-1.5 transition-all`}
             title="Pengaturan integrasi Google Sheets"
           >
-            <Settings className="w-4 h-4 text-slate-400" /> Pengaturan Sheet
+            <Settings className="w-4 h-4 text-slate-300" /> Pengaturan Sheet
           </button>
 
           <button
@@ -1809,10 +1809,10 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
               setShowConfigSettings(false);
               setShowFormRulesSettings(false);
             }}
-            className={`bg-slate-800 border ${showNotificationSettings ? 'border-emerald-500 bg-slate-850' : 'border-slate-700'} text-slate-200 hover:bg-slate-750 p-2.5 rounded-xl text-xs font-medium cursor-pointer flex items-center gap-1.5`}
+            className={`bg-slate-950/40 backdrop-blur-md border ${showNotificationSettings ? 'border-emerald-400 bg-emerald-500/15 text-emerald-300' : 'border-slate-700/50'} text-slate-200 hover:bg-slate-900/50 p-2.5 rounded-xl text-xs font-semibold cursor-pointer flex items-center gap-1.5 transition-all`}
             title="Pengaturan Notifikasi Ringkasan Harian"
           >
-            <Bell className="w-4 h-4 text-slate-400" /> Notifikasi Ringkasan
+            <Bell className="w-4 h-4 text-slate-300" /> Notifikasi Ringkasan
           </button>
 
           <button
@@ -1821,15 +1821,15 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
               setShowNotificationSettings(false);
               setShowConfigSettings(false);
             }}
-            className={`bg-slate-800 border ${showFormRulesSettings ? 'border-emerald-500 bg-slate-850' : 'border-slate-700'} text-slate-200 hover:bg-slate-750 p-2.5 rounded-xl text-xs font-medium cursor-pointer flex items-center gap-1.5`}
+            className={`bg-slate-950/40 backdrop-blur-md border ${showFormRulesSettings ? 'border-emerald-400 bg-emerald-500/15 text-emerald-300' : 'border-slate-700/50'} text-slate-200 hover:bg-slate-900/50 p-2.5 rounded-xl text-xs font-semibold cursor-pointer flex items-center gap-1.5 transition-all`}
             title="Aturan validasi input formulir absensi"
           >
-            <CalendarCheck2 className="w-4 h-4 text-slate-400" /> Aturan Validasi
+            <CalendarCheck2 className="w-4 h-4 text-slate-300" /> Aturan Validasi
           </button>
 
           <button
             onClick={onLogout}
-            className="bg-rose-955 border border-rose-900/40 text-rose-300 hover:bg-rose-500/10 px-3 py-2.5 rounded-xl text-xs font-medium flex items-center gap-1.5 cursor-pointer ml-auto lg:ml-0"
+            className="bg-rose-500/10 backdrop-blur-md border border-rose-500/25 text-rose-300 hover:bg-rose-500/20 px-3.5 py-2.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 cursor-pointer ml-auto lg:ml-0 transition-all"
           >
             <LogOut className="w-3.5 h-3.5" /> Log Out
           </button>
