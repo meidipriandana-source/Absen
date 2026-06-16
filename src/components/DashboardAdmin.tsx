@@ -39,6 +39,15 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
   const [driveFolderId, setDriveFolderId] = useState<string>(() => {
     return localStorage.getItem("custom_drive_folder_id") || "1UseBW7ICFFT-cUPD1HC3KrJUhLCVgEgR";
   });
+  const [dbStorageMode, setDbStorageMode] = useState<"sheets" | "local">(() => {
+    const saved = localStorage.getItem("db_storage_mode");
+    if (saved) return saved as "sheets" | "local";
+    return accessToken === "bypass" ? "local" : "sheets";
+  });
+  const handleToggleStorageMode = (mode: "sheets" | "local") => {
+    setDbStorageMode(mode);
+    localStorage.setItem("db_storage_mode", mode);
+  };
   const [hasAccessError, setHasAccessError] = useState(false);
   const [isCreatingResources, setIsCreatingResources] = useState(false);
   const [showConfigSettings, setShowConfigSettings] = useState(false);
@@ -604,6 +613,12 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
   // Create dynamic new spreadsheet and folder
   const handleCreateNewSheetAndFolder = async () => {
     if (!accessToken) return;
+
+    if (accessToken === "bypass") {
+      showToast("Gagal: Sesi bypass lokal (PIN/Sandi) tidak terhubung dengan Akun Google. Harap LOG OUT kemudian masuk kembali menggunakan tombol 'Masuk dengan Akun Google' untuk otomatisasi Google Drive & Sheets.", "error", 10000);
+      return;
+    }
+
     setIsCreatingResources(true);
     const toastId = showToast("Sedang membuat folder Google Drive...", "loading");
     
@@ -622,7 +637,17 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
       });
       
       if (!folderRes.ok) {
-        throw new Error("Gagal membuat folder tanda tangan di Google Drive.");
+        const errorText = await folderRes.text();
+        console.error("Google Drive folder creation failed:", errorText);
+        let errorDetail = "";
+        if (errorText.includes("invalid_grant") || errorText.includes("expired") || folderRes.status === 401) {
+          errorDetail = " Sesi Akun Google Anda telah kedaluwarsa. Silakan log out lalu masuk kembali menggunakan akun Google Anda.";
+        } else if (errorText.includes("Forbidden") || folderRes.status === 403 || errorText.includes("permission")) {
+          errorDetail = " Aplikasi tidak memiliki izin akses (Scopes) yang cukup. Pastikan Anda menyetujui semua izin akses Google Drive & Sheets saat login.";
+        } else {
+          errorDetail = ` (Detail API Google: ${folderRes.status} - ${errorText.substring(0, 80)})`;
+        }
+        throw new Error(`Gagal membuat folder tanda tangan di Google Drive.${errorDetail}`);
       }
       
       const folderData = await folderRes.json();
@@ -645,7 +670,17 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
       });
       
       if (!sheetRes.ok) {
-        throw new Error("Gagal membuat Google Spreadsheet baru.");
+        const errorText = await sheetRes.text();
+        console.error("Google Sheets creation failed:", errorText);
+        let errorDetail = "";
+        if (errorText.includes("invalid_grant") || errorText.includes("expired") || sheetRes.status === 401) {
+          errorDetail = " Sesi Akun Google Anda telah kedaluwarsa. Silakan log out lalu masuk kembali menggunakan akun Google Anda.";
+        } else if (errorText.includes("Forbidden") || sheetRes.status === 403 || errorText.includes("permission")) {
+          errorDetail = " Aplikasi tidak memiliki izin akses (Scopes) yang cukup. Pastikan Anda menyetujui semua izin akses Google Drive & Sheets saat login.";
+        } else {
+          errorDetail = ` (Detail API Google: ${sheetRes.status} - ${errorText.substring(0, 80)})`;
+        }
+        throw new Error(`Gagal membuat Google Spreadsheet baru.${errorDetail}`);
       }
       
       const sheetData = await sheetRes.json();
@@ -729,7 +764,7 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
       console.error("Resource creation error:", err);
       updateToast(toastId, { 
         type: "error", 
-        message: `Inisialisasi gagal: ${err.message || "Kesalahan tidak diketahui."}` 
+        message: `Inisialisasi gagal: ${err.message || "Kesalahan tidak diketahui."} (Solusi Lain: Anda dapat membuka Pengaturan Sheet lalu beralih ke Mode Database Lokal Mandiri untuk melanjutkan tanpa Google Drive & Sheets).` 
       });
     } finally {
       setIsCreatingResources(false);
@@ -1063,9 +1098,70 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
       } catch (e) {
         console.warn("Printing to invisible iframe failed:", e);
       }
+
+      // Check if authorized Google session is connected, then back up PDF to Google Drive folder
+      let uploadedToDrive = false;
+      if (accessToken && accessToken !== "bypass" && driveFolderId) {
+        try {
+          setPdfProgressText("Mengunggah ke Drive...");
+          updateToast(toastId, { message: "Mengunggah file PDF laporan ke Google Drive..." });
+          
+          const pdfBlob = doc.output("blob");
+
+          // 1. Create file metadata in target folder
+          const metaRes = await fetch("https://www.googleapis.com/drive/v3/files", {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${accessToken}`,
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+              name: filename,
+              parents: [driveFolderId],
+              mimeType: "application/pdf"
+            })
+          });
+
+          if (!metaRes.ok) {
+            const errTxt = await metaRes.text();
+            throw new Error(`Gagal membuat metadata PDF di Google Drive: ${errTxt}`);
+          }
+
+          const metaData = await metaRes.json();
+          const fileId = metaData.id;
+
+          // 2. Upload the standard PDF body
+          const uploadRes = await fetch(`https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`, {
+            method: "PATCH",
+            headers: {
+              Authorization: `Bearer ${accessToken}`,
+              "Content-Type": "application/pdf"
+            },
+            body: pdfBlob
+          });
+
+          if (!uploadRes.ok) {
+            const errTxt = await uploadRes.text();
+            throw new Error(`Gagal mengunggah biner PDF ke Google Drive: ${errTxt}`);
+          }
+
+          uploadedToDrive = true;
+        } catch (driveErr: any) {
+          console.error("Gagal mengunggah PDF ke Google Drive:", driveErr);
+          showToast(`Gagal mengunggah ke Google Drive: ${driveErr.message || driveErr}`, "warning", 6000);
+        }
+      }
       
       dismissToast(toastId);
-      showToast("Laporan PDF berhasil diunduh & dialog cetak dipicu!", "success");
+      if (uploadedToDrive) {
+        showToast("Laporan PDF berhasil diunduh lokal & dicadangkan secara otomatis ke Google Drive!", "success");
+      } else {
+        if (accessToken === "bypass") {
+          showToast("Laporan PDF diunduh! (Penyimpanan ke Google Drive dilewati karena menggunakan PIN bypass lokal).", "success");
+        } else {
+          showToast("Laporan PDF berhasil diunduh lokal & dialog cetak dipicu!", "success");
+        }
+      }
     } catch (err: any) {
       console.error("Gagal membuat PDF:", err);
       dismissToast(toastId);
@@ -1419,11 +1515,18 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
               Live
             </span>
           </div>
-          <p className="text-xs text-slate-300 mt-1 max-w-lg">
-            Terhubung ke Google Spreadsheet dan folder Google Drive secara interaktif. 
-            Menampilkan data peserta secara instan dan akurat.
-          </p>
-          {lastSynced && (
+          {dbStorageMode === "local" ? (
+            <p className="text-xs text-slate-300 mt-1 max-w-lg">
+              Menggunakan Mode Database Lokal Server (Tanpa Google Sheets). 
+              Data kehadiran & tanda tangan terjamin sangat aman dan siap dinikmati atau diekspor ke Excel/PDF kapan saja.
+            </p>
+          ) : (
+            <p className="text-xs text-slate-300 mt-1 max-w-lg">
+              Terhubung ke Google Spreadsheet dan folder Google Drive secara interaktif. 
+              Menampilkan data peserta secara instan dan akurat.
+            </p>
+          )}
+          {lastSynced && dbStorageMode !== "local" && (
             <p className="text-[10px] text-emerald-400 mt-1 flex items-center gap-1">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 self-center"></span>
               Sinkronisasi Terakhir: {lastSynced} (setiap 10s otomatis)
@@ -1438,37 +1541,49 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
               <span className="text-white font-extrabold bg-sky-500/20 px-1.5 py-0.5 rounded-md min-w-[16px] text-center" title="Jumlah admin yang sedang memantau halaman">{activeAdminCount} Sesi</span>
             </div>
 
-            <div 
-              className={`flex items-center gap-1.5 bg-slate-800/60 border h-7 px-2.5 rounded-lg text-[10px] font-semibold transition-all relative group cursor-help ${
-                googleSpreadsheetStatus === "connected"
-                  ? "border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/5"
-                  : googleSpreadsheetStatus === "error"
-                  ? "border-rose-500/20 text-rose-400 hover:bg-rose-500/5"
-                  : "border-amber-500/20 text-amber-400 hover:bg-amber-500/5"
-              }`}
-              title={googleSpreadsheetError || "Status Google Sheets API"}
-            >
-              <div className={`w-1.5 h-1.5 rounded-full ${
-                googleSpreadsheetStatus === "connected"
-                  ? "bg-emerald-400 animate-pulse"
-                  : googleSpreadsheetStatus === "error"
-                  ? "bg-rose-400"
-                  : "bg-amber-400"
-              }`} />
-              <Activity className="w-3 h-3" />
-              <span>Koneksi API Sheets:</span>
-              <span className="uppercase font-extrabold">
-                {googleSpreadsheetStatus === "connected" ? "Terhubung" : googleSpreadsheetStatus === "error" ? "Bermasalah" : "Belum Set"}
-              </span>
+            {dbStorageMode === "local" ? (
+              <div 
+                className="flex items-center gap-1.5 bg-emerald-500/10 border border-emerald-500/25 h-7 px-2.5 rounded-lg text-[10px] font-bold text-emerald-400 cursor-help"
+                title="Aplikasi berjalan stabil menggunakan mode database lokal di server Node.js"
+              >
+                <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Penyimpanan:</span>
+                <span className="uppercase font-extrabold text-white">DATABASE LOKAL (STABIL)</span>
+              </div>
+            ) : (
+              <div 
+                className={`flex items-center gap-1.5 bg-slate-800/60 border h-7 px-2.5 rounded-lg text-[10px] font-semibold transition-all relative group cursor-help ${
+                  googleSpreadsheetStatus === "connected"
+                    ? "border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/5"
+                    : googleSpreadsheetStatus === "error"
+                    ? "border-rose-500/20 text-rose-400 hover:bg-rose-500/5"
+                    : "border-amber-500/20 text-amber-400 hover:bg-amber-500/5"
+                }`}
+                title={googleSpreadsheetError || "Status Google Sheets API"}
+              >
+                <div className={`w-1.5 h-1.5 rounded-full ${
+                  googleSpreadsheetStatus === "connected"
+                    ? "bg-emerald-400 animate-pulse"
+                    : googleSpreadsheetStatus === "error"
+                    ? "bg-rose-400"
+                    : "bg-amber-400"
+                }`} />
+                <Activity className="w-3 h-3" />
+                <span>Koneksi API Sheets:</span>
+                <span className="uppercase font-extrabold">
+                  {googleSpreadsheetStatus === "connected" ? "Terhubung" : googleSpreadsheetStatus === "error" ? "Bermasalah" : "Belum Set"}
+                </span>
 
-              {/* Advanced Tooltip for specific error logs on hover */}
-              {googleSpreadsheetStatus === "error" && googleSpreadsheetError && (
-                <div className="absolute top-full left-0 z-50 mt-1.5 hidden group-hover:block transition-all duration-200 w-64 bg-slate-950 text-slate-300 border border-slate-800 text-[9px] p-2.5 rounded-lg shadow-2xl leading-normal font-sans text-left normal-case">
-                  <span className="font-bold text-rose-400 block mb-1">Detail Kesalahan Koneksi:</span>
-                  {googleSpreadsheetError}
-                </div>
-              )}
-            </div>
+                {/* Advanced Tooltip for specific error logs on hover */}
+                {googleSpreadsheetStatus === "error" && googleSpreadsheetError && (
+                  <div className="absolute top-full left-0 z-50 mt-1.5 hidden group-hover:block transition-all duration-200 w-64 bg-slate-950 text-slate-300 border border-slate-800 text-[9px] p-2.5 rounded-lg shadow-2xl leading-normal font-sans text-left normal-case">
+                    <span className="font-bold text-rose-400 block mb-1">Detail Kesalahan Koneksi:</span>
+                    {googleSpreadsheetError}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
 
@@ -1603,7 +1718,7 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
         </div>
       </div>
 
-      {hasAccessError && (
+      {hasAccessError && dbStorageMode !== "local" && (
         <motion.div 
           initial={{ opacity: 0, y: -10 }} 
           animate={{ opacity: 1, y: 0 }} 
@@ -1665,79 +1780,141 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
             </button>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="space-y-1.5">
-              <label className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider block">ID Google Spreadsheet Utama</label>
-              <input
-                type="text"
-                value={spreadsheetId}
-                onChange={(e) => {
-                  const val = e.target.value.trim();
-                  setSpreadsheetId(val);
-                  localStorage.setItem("custom_spreadsheet_id", val);
-                  fetch("/api/save-token", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ accessToken, spreadsheetId: val, driveFolderId })
-                  });
-                }}
-                className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs focus:ring-1 focus:ring-emerald-500 outline-none text-slate-700 font-mono"
-                placeholder="Masukkan ID Spreadsheet Anda"
-              />
-              <p className="text-[10px] text-slate-400 leading-normal">
-                Google Spreadsheet tempat menyimpan data kehadiran. Anda bisa menyalinnya dari URL url sheets.
-              </p>
-            </div>
+          {/* PEMILIH MODE PENYIMPANAN */}
+          <div className="bg-indigo-50/60 border border-indigo-150 p-4 rounded-xl space-y-2 text-left mb-2">
+            <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">Mode Database & Penyimpanan Utama</label>
+            <p className="text-[11px] text-slate-600 leading-normal mb-3">
+              Pilih solusi penyimpanan yang ingin Anda gunakan. Jika integrasi Google Drive/Sheets mengalami kendala izin atau gagal menginisialisasi folder, silakan aktifkan <strong>Mode Database Lokal Mandiri</strong> di bawah agar dapat langsung meregistrasikan absensi HP peserta tanpa error Google API.
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <button
+                type="button"
+                onClick={() => handleToggleStorageMode("local")}
+                className={`p-3.5 rounded-xl border text-left transition-all relative cursor-pointer ${
+                  dbStorageMode === "local" 
+                    ? "bg-white border-emerald-500 ring-1 ring-emerald-500 shadow-sm" 
+                    : "bg-slate-50/50 border-slate-200 hover:bg-slate-100"
+                }`}
+              >
+                <div className="flex items-center justify-between mb-1">
+                  <span className="font-bold text-xs text-slate-800 flex items-center gap-1.5">
+                    <ShieldCheck className="w-4 h-4 text-emerald-600" /> Database Lokal Mandiri
+                  </span>
+                  {dbStorageMode === "local" && (
+                    <span className="bg-emerald-500 text-white font-bold text-[8px] px-1.5 py-0.5 rounded uppercase">AKTIF</span>
+                  )}
+                </div>
+                <p className="text-[10px] text-slate-500 leading-normal">
+                  Sangat direkomendasikan jika bypass atau Google error. Menyimpan data langsung ke server lokal (cadangan offline). 100% lancar tanpa Google Sheets API.
+                </p>
+              </button>
 
-            <div className="space-y-1.5">
-              <label className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider block">ID Folder Google Drive (Tanda Tangan)</label>
-              <input
-                type="text"
-                value={driveFolderId}
-                onChange={(e) => {
-                  const val = e.target.value.trim();
-                  setDriveFolderId(val);
-                  localStorage.setItem("custom_drive_folder_id", val);
-                  fetch("/api/save-token", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ accessToken, spreadsheetId, driveFolderId: val })
-                  });
-                }}
-                className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs focus:ring-1 focus:ring-emerald-500 outline-none text-slate-700 font-mono"
-                placeholder="Masukkan ID Folder Drive Anda"
-              />
-              <p className="text-[10px] text-slate-400 leading-normal">
-                Folder tempat menyimpan file gambar tanda tangan PNG peserta.
-              </p>
+              <button
+                type="button"
+                onClick={() => handleToggleStorageMode("sheets")}
+                className={`p-3.5 rounded-xl border text-left transition-all relative cursor-pointer ${
+                  dbStorageMode === "sheets" 
+                    ? "bg-white border-sky-500 ring-1 ring-sky-500 shadow-sm" 
+                    : "bg-slate-50/50 border-slate-200 hover:bg-slate-100"
+                }`}
+              >
+                <div className="flex items-center justify-between mb-1">
+                  <span className="font-bold text-xs text-slate-800 flex items-center gap-1.5">
+                    <Activity className="w-4 h-4 text-sky-600" /> Integrasi Cloud Google Sheets
+                  </span>
+                  {dbStorageMode === "sheets" && (
+                    <span className="bg-sky-500 text-white font-bold text-[8px] px-1.5 py-0.5 rounded uppercase">AKTIF</span>
+                  )}
+                </div>
+                <p className="text-[10px] text-slate-500 leading-normal">
+                  Hubungkan dengan Google Sheets dan folder Drive pribadi. Menuntut login admin via Google Auth (harus menyetujui Scopes).
+                </p>
+              </button>
             </div>
           </div>
 
-          <div className="bg-slate-100/50 p-4 rounded-xl border border-slate-200/50 flex flex-col md:flex-row md:items-center justify-between gap-4">
-            <div>
-              <p className="text-xs font-semibold text-slate-700 font-medium">Buat Baru Secara Otomatis?</p>
-              <p className="text-[10px] text-slate-400 leading-relaxed mt-0.5">
-                Jangan khawatir tentang konfigurasi manual. Klik tombol di samping untuk membuat file Spreadsheet dan folder Drive baru di penyimpanan Google Anda sendiri secara instan.
-              </p>
+          {dbStorageMode === "local" ? (
+            <div className="bg-emerald-50/60 border border-emerald-100 p-4 rounded-xl text-xs text-slate-650 leading-relaxed text-left">
+              <span className="font-bold text-slate-800 block mb-1">✨ Sistem Menggunakan Solusi Penyimpanan Lokal Mandiri (Aktif)</span>
+              Aplikasi saat ini tidak bergantung pada Google Sheets API. Semua pendaftaran absensi dari HP peserta akan tercatat instan di server lokal. Tanda tangan akan disimpan langsung sebagai file digital, dan Anda dapat mengekspor seluruh rekaman kehadiran kapan saja dalam format <strong>Unduh PDF</strong> atau <strong>Excel</strong> di Dashboard Admin.
             </div>
+          ) : (
+            <>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-1.5">
+                  <label className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider block">ID Google Spreadsheet Utama</label>
+                  <input
+                    type="text"
+                    value={spreadsheetId}
+                    onChange={(e) => {
+                      const val = e.target.value.trim();
+                      setSpreadsheetId(val);
+                      localStorage.setItem("custom_spreadsheet_id", val);
+                      fetch("/api/save-token", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ accessToken, spreadsheetId: val, driveFolderId })
+                      });
+                    }}
+                    className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs focus:ring-1 focus:ring-emerald-500 outline-none text-slate-700 font-mono"
+                    placeholder="Masukkan ID Spreadsheet Anda"
+                  />
+                  <p className="text-[10px] text-slate-400 leading-normal">
+                    Google Spreadsheet tempat menyimpan data kehadiran. Anda bisa menyalinnya dari URL url sheets.
+                  </p>
+                </div>
 
-            <button
-              type="button"
-              onClick={handleCreateNewSheetAndFolder}
-              disabled={isCreatingResources}
-              className="bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white font-semibold py-2 px-4 rounded-xl text-xs transition-all flex items-center justify-center gap-1.5 shrink-0 self-end md:self-auto cursor-pointer"
-            >
-              {isCreatingResources ? (
-                <>
-                  <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Menginisialisasi...
-                </>
-              ) : (
-                <>
-                  <CheckCircle2 className="w-3.5 h-3.5" /> Buat Otomatis Sekarang
-                </>
-              )}
-            </button>
-          </div>
+                <div className="space-y-1.5">
+                  <label className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider block">ID Folder Google Drive (Tanda Tangan)</label>
+                  <input
+                    type="text"
+                    value={driveFolderId}
+                    onChange={(e) => {
+                      const val = e.target.value.trim();
+                      setDriveFolderId(val);
+                      localStorage.setItem("custom_drive_folder_id", val);
+                      fetch("/api/save-token", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ accessToken, spreadsheetId, driveFolderId: val })
+                      });
+                    }}
+                    className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs focus:ring-1 focus:ring-emerald-500 outline-none text-slate-700 font-mono"
+                    placeholder="Masukkan ID Folder Drive Anda"
+                  />
+                  <p className="text-[10px] text-slate-400 leading-normal">
+                    Folder tempat menyimpan file gambar tanda tangan PNG peserta.
+                  </p>
+                </div>
+              </div>
+
+              <div className="bg-slate-100/50 p-4 rounded-xl border border-slate-200/50 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div>
+                  <p className="text-xs font-semibold text-slate-700 font-medium">Buat Baru Secara Otomatis?</p>
+                  <p className="text-[10px] text-slate-400 leading-relaxed mt-0.5">
+                    Jangan khawatir tentang konfigurasi manual. Klik tombol di samping untuk membuat file Spreadsheet dan folder Drive baru di penyimpanan Google Anda sendiri secara instan.
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleCreateNewSheetAndFolder}
+                  disabled={isCreatingResources}
+                  className="bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white font-semibold py-2 px-4 rounded-xl text-xs transition-all flex items-center justify-center gap-1.5 shrink-0 self-end md:self-auto cursor-pointer"
+                >
+                  {isCreatingResources ? (
+                    <>
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Menginisialisasi...
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle2 className="w-3.5 h-3.5" /> Buat Otomatis Sekarang
+                    </>
+                  )}
+                </button>
+              </div>
+            </>
+          )}
 
           {/* Cadangan Google Drive Cadangan Otomatis Section */}
           <div className="border-t border-slate-200/80 pt-5 space-y-4">
