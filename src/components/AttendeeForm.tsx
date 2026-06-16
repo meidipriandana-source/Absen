@@ -57,11 +57,42 @@ export default function AttendeeForm({ onSuccess, sessionActive }: AttendeeFormP
   const [instansi, setInstansi] = useState("");
   const [nip, setNip] = useState("");
   const [jabatan, setJabatan] = useState("");
-  const [email, setEmail] = useState("");
+  const [jenisKegiatan, setJenisKegiatan] = useState("Pelatihan / Diklat");
+  const [judulKegiatan, setJudulKegiatan] = useState("");
   const [signature, setSignature] = useState<string | null>(null);
   
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  const [formRules, setFormRules] = useState<{ requiredFields: Record<string, boolean> }>({
+    requiredFields: {
+      "Pelatihan / Diklat": true,
+      "Rapat Internal / Eksternal": true,
+      "Seminar / Sosialisasi / Webinar": true,
+      "Kunjungan / Studi Banding": true,
+      "Apel / Upacara": true,
+      "Lainnya": true,
+    }
+  });
+
+  // Fetch validation rules configuration on mount
+  useEffect(() => {
+    const fetchRules = async () => {
+      try {
+        const res = await fetch("/api/form-rules/config");
+        if (res.ok) {
+          const contentType = res.headers.get("content-type") || "";
+          if (contentType.includes("application/json")) {
+            const data = await res.json();
+            setFormRules(data);
+          }
+        }
+      } catch (err) {
+        console.error("Gagal memuat aturan validasi dari server:", err);
+      }
+    };
+    fetchRules();
+  }, []);
 
   // Load cached form values on mount
   useEffect(() => {
@@ -69,13 +100,15 @@ export default function AttendeeForm({ onSuccess, sessionActive }: AttendeeFormP
     const cachedInstansi = localStorage.getItem("absen_cached_instansi");
     const cachedNip = localStorage.getItem("absen_cached_nip");
     const cachedJabatan = localStorage.getItem("absen_cached_jabatan");
-    const cachedEmail = localStorage.getItem("absen_cached_email");
+    const cachedJenisKegiatan = localStorage.getItem("absen_cached_jenis_kegiatan");
+    const cachedJudulKegiatan = localStorage.getItem("absen_cached_judul_kegiatan");
 
     if (cachedName) setName(cachedName);
     if (cachedInstansi) setInstansi(cachedInstansi);
     if (cachedNip) setNip(cachedNip);
     if (cachedJabatan) setJabatan(cachedJabatan);
-    if (cachedEmail) setEmail(cachedEmail);
+    if (cachedJenisKegiatan) setJenisKegiatan(cachedJenisKegiatan);
+    if (cachedJudulKegiatan) setJudulKegiatan(cachedJudulKegiatan);
   }, []);
 
   // Cache updates to local storage
@@ -96,8 +129,12 @@ export default function AttendeeForm({ onSuccess, sessionActive }: AttendeeFormP
   }, [jabatan]);
 
   useEffect(() => {
-    localStorage.setItem("absen_cached_email", email);
-  }, [email]);
+    localStorage.setItem("absen_cached_jenis_kegiatan", jenisKegiatan);
+  }, [jenisKegiatan]);
+
+  useEffect(() => {
+    localStorage.setItem("absen_cached_judul_kegiatan", judulKegiatan);
+  }, [judulKegiatan]);
 
   // Clear specific local storage keys
   const clearLocalStorageCache = () => {
@@ -105,7 +142,8 @@ export default function AttendeeForm({ onSuccess, sessionActive }: AttendeeFormP
     localStorage.removeItem("absen_cached_instansi");
     localStorage.removeItem("absen_cached_nip");
     localStorage.removeItem("absen_cached_jabatan");
-    localStorage.removeItem("absen_cached_email");
+    localStorage.removeItem("absen_cached_jenis_kegiatan");
+    localStorage.removeItem("absen_cached_judul_kegiatan");
   };
 
   const validateStep1 = () => {
@@ -124,6 +162,12 @@ export default function AttendeeForm({ onSuccess, sessionActive }: AttendeeFormP
     }
     if (!jabatan.trim()) {
       setErrorMessage("Jabatan wajib diisi.");
+      return false;
+    }
+
+    const isJudulRequired = formRules?.requiredFields?.[jenisKegiatan] !== false;
+    if (isJudulRequired && !judulKegiatan.trim()) {
+      setErrorMessage(`Judul Kegiatan wajib diisi untuk jenis kegiatan "${jenisKegiatan}".`);
       return false;
     }
     return true;
@@ -195,7 +239,8 @@ export default function AttendeeForm({ onSuccess, sessionActive }: AttendeeFormP
             instansi: instansi.trim(),
             nip: nip.trim(),
             jabatan: jabatan.trim(),
-            email: email.trim(),
+            jenisKegiatan: jenisKegiatan.trim(),
+            judulKegiatan: judulKegiatan.trim(),
             signature,
           }),
         });
@@ -247,7 +292,8 @@ export default function AttendeeForm({ onSuccess, sessionActive }: AttendeeFormP
           name: name.trim(),
           instansi: instansi.trim(),
           jabatan: jabatan.trim(),
-          email: email.trim() || "-",
+          jenisKegiatan: jenisKegiatan.trim() || "-",
+          judulKegiatan: judulKegiatan.trim() || "-",
           checkInTime,
           signature: signature || "", // Preserve base64
           signatureUrl: signature || "", // Use base64 signature inline
@@ -281,7 +327,8 @@ export default function AttendeeForm({ onSuccess, sessionActive }: AttendeeFormP
         setInstansi("");
         setNip("");
         setJabatan("");
-        setEmail("");
+        setJenisKegiatan("Pelatihan / Diklat");
+        setJudulKegiatan("");
         setSignature(null);
         setStep(1);
       }
@@ -449,7 +496,13 @@ export default function AttendeeForm({ onSuccess, sessionActive }: AttendeeFormP
           <button 
             type="button"
             onClick={() => (step === 3 ? handleBackToStep2() : step === 1 && handleNextToStep2())}
-            disabled={step === 2 || (step === 1 && !(name.trim() && instansi.trim() && nip.trim() && jabatan.trim()))}
+            disabled={step === 2 || (step === 1 && !(
+              name.trim() && 
+              instansi.trim() && 
+              nip.trim() && 
+              jabatan.trim() && 
+              ((formRules?.requiredFields?.[jenisKegiatan] === false) || judulKegiatan.trim())
+            ))}
             className="flex flex-col items-center group cursor-pointer disabled:cursor-default"
           >
             <motion.div 
@@ -611,21 +664,52 @@ export default function AttendeeForm({ onSuccess, sessionActive }: AttendeeFormP
                   </div>
                 </div>
 
-                {/* Alamat Email */}
+                {/* Jenis Kegiatan */}
                 <div className="md:col-span-2">
-                  <label className="block text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5 select-none">
-                    Alamat Email <span className="text-slate-400 text-[10px] font-normal lowercase">(opsional)</span>
+                  <label className="block text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5 select-none text-left">
+                    Jenis Kegiatan <span className="text-rose-500">*</span>
                   </label>
                   <div className="relative">
                     <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
-                      <Mail className="w-4 h-4 text-indigo-600" />
+                      <Sparkles className="w-4 h-4 text-indigo-600" />
+                    </div>
+                    <select
+                      value={jenisKegiatan}
+                      onChange={(e) => setJenisKegiatan(e.target.value)}
+                      className="w-full pl-11 pr-10 py-2.5 border border-slate-200 rounded-xl text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all bg-white text-slate-800 font-medium font-sans appearance-none cursor-pointer"
+                    >
+                      <option value="Pelatihan / Diklat">Pelatihan / Diklat</option>
+                      <option value="Rapat Internal / Eksternal">Rapat Internal / Eksternal</option>
+                      <option value="Seminar / Sosialisasi / Webinar">Seminar / Sosialisasi / Webinar</option>
+                      <option value="Kunjungan / Studi Banding">Kunjungan / Studi Banding</option>
+                      <option value="Apel / Upacara">Apel / Upacara</option>
+                      <option value="Lainnya">Lainnya</option>
+                    </select>
+                    <div className="absolute inset-y-0 right-0 pr-3.5 flex items-center pointer-events-none text-slate-400">
+                      <ChevronRight className="w-4 h-4 rotate-90 text-indigo-600" />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Judul Kegiatan */}
+                <div className="md:col-span-2">
+                  <label className="block text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5 select-none text-left">
+                    Judul Kegiatan {formRules?.requiredFields?.[jenisKegiatan] !== false ? (
+                      <span className="text-rose-500">*</span>
+                    ) : (
+                      <span className="text-slate-400 font-medium capitalize"> (Opsional)</span>
+                    )}
+                  </label>
+                  <div className="relative">
+                    <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
+                      <FileText className="w-4 h-4 text-indigo-600" />
                     </div>
                     <input
-                      type="email"
-                      placeholder="Contoh: alamat@email.com"
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                      className="w-full pl-10 pr-4 py-2.5 border border-slate-200 rounded-xl text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all bg-white text-slate-800 placeholder-slate-400 font-medium font-sans"
+                      type="text"
+                      placeholder="Masukkan judul atau topik kegiatan..."
+                      value={judulKegiatan}
+                      onChange={(e) => setJudulKegiatan(e.target.value)}
+                      className="w-full pl-11 pr-4 py-2.5 border border-slate-200 rounded-xl text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all bg-white text-slate-800 placeholder-slate-400 font-medium font-sans"
                     />
                   </div>
                 </div>
@@ -748,12 +832,14 @@ export default function AttendeeForm({ onSuccess, sessionActive }: AttendeeFormP
                     <span className="text-slate-400 font-medium">Jabatan</span>
                     <span className="col-span-2 font-semibold text-slate-800">{jabatan}</span>
                   </div>
-                  {email.trim() && (
-                    <div className="grid grid-cols-3 pt-2">
-                      <span className="text-slate-400 font-medium">Email</span>
-                      <span className="col-span-2 font-semibold text-slate-800">{email}</span>
-                    </div>
-                  )}
+                  <div className="grid grid-cols-3 pt-2">
+                    <span className="text-slate-400 font-medium">Jenis Kegiatan</span>
+                    <span className="col-span-2 font-semibold text-slate-800">{jenisKegiatan}</span>
+                  </div>
+                  <div className="grid grid-cols-3 pt-2">
+                    <span className="text-slate-400 font-medium">Judul Kegiatan</span>
+                    <span className="col-span-2 font-semibold text-slate-800">{judulKegiatan}</span>
+                  </div>
                 </div>
 
                 <div className="bg-slate-50 px-4 py-3 border-t border-b border-slate-150 flex items-center justify-between">

@@ -25,6 +25,7 @@ function getWritablePath(filename: string): string {
 
 const SESSION_FILE = getWritablePath("admin_session.json");
 const NOTIFICATION_FILE = getWritablePath("notification_settings.json");
+const FORM_RULES_FILE = getWritablePath("form_rules.json");
 
 interface NotificationSettings {
   telegramEnabled: boolean;
@@ -79,6 +80,55 @@ function saveNotificationSettings(settings: Partial<NotificationSettings>) {
     fs.writeFileSync(NOTIFICATION_FILE, JSON.stringify(updated, null, 2), "utf-8");
   } catch (err) {
     console.error("Error writing notification settings file:", err);
+  }
+}
+
+interface FormRules {
+  requiredFields: {
+    [key: string]: boolean;
+  };
+}
+
+const DEFAULT_FORM_RULES: FormRules = {
+  requiredFields: {
+    "Pelatihan / Diklat": true,
+    "Rapat Internal / Eksternal": true,
+    "Seminar / Sosialisasi / Webinar": true,
+    "Kunjungan / Studi Banding": true,
+    "Apel / Upacara": true,
+    "Lainnya": true,
+  }
+};
+
+function loadValidationRules(): FormRules {
+  try {
+    if (fs.existsSync(FORM_RULES_FILE)) {
+      const data = fs.readFileSync(FORM_RULES_FILE, "utf-8");
+      return { 
+        requiredFields: { 
+          ...DEFAULT_FORM_RULES.requiredFields, 
+          ...JSON.parse(data).requiredFields 
+        } 
+      };
+    }
+  } catch (err) {
+    console.error("Error reading form validation rules file:", err);
+  }
+  return DEFAULT_FORM_RULES;
+}
+
+function saveValidationRules(rules: Partial<FormRules>) {
+  try {
+    const existing = loadValidationRules();
+    const updated = { 
+      requiredFields: { 
+        ...existing.requiredFields, 
+        ...(rules.requiredFields || {}) 
+      } 
+    };
+    fs.writeFileSync(FORM_RULES_FILE, JSON.stringify(updated, null, 2), "utf-8");
+  } catch (err) {
+    console.error("Error writing form validation rules file:", err);
   }
 }
 
@@ -317,7 +367,9 @@ interface LocalAttendee {
   name: string;
   instansi: string;
   jabatan: string;
-  email: string;
+  jenisKegiatan: string;
+  judulKegiatan: string;
+  email?: string;
   checkInTime: string;
   signature: string; // Base64 signature image
   signatureUrl: string; // Dynamic local serve url
@@ -330,7 +382,16 @@ function loadLocalAttendees(): LocalAttendee[] {
   try {
     if (fs.existsSync(ATTENDEES_FILE)) {
       const data = fs.readFileSync(ATTENDEES_FILE, "utf-8");
-      return JSON.parse(data);
+      const list = JSON.parse(data) as any[];
+      return list.map(a => {
+        if (a.jenisKegiatan === undefined) {
+          a.jenisKegiatan = a.email || "-";
+        }
+        if (a.judulKegiatan === undefined) {
+          a.judulKegiatan = "-";
+        }
+        return a as LocalAttendee;
+      });
     }
   } catch (err) {
     console.error("Error reading local attendees file:", err);
@@ -582,6 +643,18 @@ app.post("/api/notifications/config", (req, res) => {
   res.json({ success: true, message: "Pengaturan notifikasi berhasil disimpan." });
 });
 
+// Get form validation rules configuration
+app.get("/api/form-rules/config", (req, res) => {
+  const current = loadValidationRules();
+  res.json(current);
+});
+
+// Save form validation rules configuration
+app.post("/api/form-rules/config", (req, res) => {
+  saveValidationRules(req.body);
+  res.json({ success: true, message: "Pengaturan validasi berhasil disimpan." });
+});
+
 // Test notification
 app.post("/api/notifications/test", async (req, res) => {
   const { channel, settings } = req.body;
@@ -738,7 +811,7 @@ app.delete("/api/attendees/:nip", async (req, res) => {
 // Web attendee edit endpoint (updates local database + optional Sheets)
 app.put("/api/attendees/:nip", async (req, res) => {
   const { nip } = req.params;
-  const { name, instansi, jabatan, email } = req.body;
+  const { name, instansi, jabatan, jenisKegiatan, judulKegiatan, email } = req.body;
   const list = loadLocalAttendees();
   const index = list.findIndex(a => a.nip === nip);
   
@@ -749,7 +822,8 @@ app.put("/api/attendees/:nip", async (req, res) => {
   list[index].name = name || list[index].name;
   list[index].instansi = instansi || list[index].instansi;
   list[index].jabatan = jabatan || list[index].jabatan;
-  list[index].email = email || list[index].email;
+  list[index].jenisKegiatan = jenisKegiatan || email || list[index].jenisKegiatan || "-";
+  list[index].judulKegiatan = judulKegiatan || list[index].judulKegiatan || "-";
 
   saveLocalAttendees(list);
 
@@ -769,7 +843,7 @@ app.put("/api/attendees/:nip", async (req, res) => {
         const firstTabName = meta.sheets[0].properties.title;
         
         await fetch(
-          `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent(firstTabName)}!A${rowNum}:H${rowNum}?valueInputOption=USER_ENTERED`,
+          `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent(firstTabName)}!A${rowNum}:I${rowNum}?valueInputOption=USER_ENTERED`,
           {
             method: "PUT",
             headers: {
@@ -777,7 +851,7 @@ app.put("/api/attendees/:nip", async (req, res) => {
               "Content-Type": "application/json",
             },
             body: JSON.stringify({
-              range: `${firstTabName}!A${rowNum}:H${rowNum}`,
+              range: `${firstTabName}!A${rowNum}:I${rowNum}`,
               majorDimension: "ROWS",
               values: [
                 [
@@ -786,7 +860,8 @@ app.put("/api/attendees/:nip", async (req, res) => {
                   list[index].name,
                   list[index].instansi,
                   list[index].jabatan,
-                  list[index].email,
+                  list[index].jenisKegiatan,
+                  list[index].judulKegiatan,
                   list[index].checkInTime,
                   list[index].signatureUrl,
                 ],
@@ -819,11 +894,14 @@ app.post("/api/submit-attendance", async (req, res) => {
     });
   }
 
-  const { name, instansi, nip, jabatan, email, signature } = req.body;
+  const { name, instansi, nip, jabatan, jenisKegiatan, judulKegiatan, email, signature } = req.body;
 
   if (!name || !instansi || !nip || !jabatan || !signature) {
     return res.status(400).json({ error: "Nama, Instansi, Jabatan, NIP, dan tanda tangan wajib diisi." });
   }
+
+  const resolvedJenisKegiatan = jenisKegiatan || email || "-";
+  const resolvedJudulKegiatan = judulKegiatan || "-";
 
   try {
     const list = loadLocalAttendees();
@@ -851,7 +929,8 @@ app.post("/api/submit-attendance", async (req, res) => {
       name,
       instansi,
       jabatan,
-      email: email || "-",
+      jenisKegiatan: resolvedJenisKegiatan,
+      judulKegiatan: resolvedJudulKegiatan,
       checkInTime,
       signature,
       signatureUrl: localSigUrl,
@@ -879,7 +958,8 @@ app.post("/api/submit-attendance", async (req, res) => {
           name,
           instansi,
           jabatan,
-          email: email || "-",
+          jenisKegiatan: resolvedJenisKegiatan,
+          judulKegiatan: resolvedJudulKegiatan,
           checkInTime,
           signatureFileId
         }, session.spreadsheetId);
@@ -978,7 +1058,8 @@ async function appendAttendeeToSheet(token: string, data: {
   name: string;
   instansi: string;
   jabatan: string;
-  email: string;
+  jenisKegiatan: string;
+  judulKegiatan: string;
   checkInTime: string;
   signatureFileId: string;
 }, customSpreadsheetId?: string) {
@@ -1002,7 +1083,7 @@ async function appendAttendeeToSheet(token: string, data: {
   const firstSheetTitle = sheets[0].properties.title;
 
   // 2. Read first row to see if headers are needed
-  const readRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(firstSheetTitle)}!A1:H1`, {
+  const readRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(firstSheetTitle)}!A1:I1`, {
     headers: { "Authorization": `Bearer ${token}` }
   });
   
@@ -1022,7 +1103,8 @@ async function appendAttendeeToSheet(token: string, data: {
       "Nama Lengkap",
       "Instansi",
       "Jabatan",
-      "Email",
+      "Jenis Kegiatan",
+      "Judul Kegiatan",
       "Waktu Hadir",
       "Link Tanda Tangan"
     ]);
@@ -1051,13 +1133,14 @@ async function appendAttendeeToSheet(token: string, data: {
     data.name,
     data.instansi,
     data.jabatan,
-    data.email,
+    data.jenisKegiatan,
+    data.judulKegiatan,
     data.checkInTime,
     viewUrl
   ]);
 
   // Append data row
-  const appendRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(firstSheetTitle)}!A:H:append?valueInputOption=USER_ENTERED`, {
+  const appendRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(firstSheetTitle)}!A:I:append?valueInputOption=USER_ENTERED`, {
     method: "POST",
     headers: {
       "Authorization": `Bearer ${token}`,
@@ -1299,6 +1382,140 @@ app.post("/api/backup/run", async (req, res) => {
     }
   } catch (err: any) {
     res.status(500).json({ error: err.message || "Terjadi kesalahan internal saat membuat cadangan absensi." });
+  }
+});
+
+// Endpoint untuk secara otomatis membuat folder per tanggal dan mengunggah PDF laporan kehadiran
+app.post("/api/upload-pdf-to-date-folder", async (req, res) => {
+  const { pdfBase64, filename, accessToken: clientToken, driveFolderId: clientFolderId } = req.body;
+
+  if (!pdfBase64) {
+    return res.status(400).json({ error: "Sandi biner/Base64 PDF wajib dikirimkan." });
+  }
+
+  // Resolve accessToken and driveFolderId
+  const session = loadSession();
+  const token = clientToken || session?.accessToken;
+  const parentFolderId = clientFolderId || session?.driveFolderId;
+
+  if (!token || token === "bypass") {
+    return res.status(400).json({ error: "Sesi otorisasi Google Drive tidak aktif atau tidak ditemukan." });
+  }
+  if (!parentFolderId) {
+    return res.status(400).json({ error: "ID Folder tujuan Google Drive belum dikonfigurasi." });
+  }
+
+  try {
+    // 1. Get current local date formatted as DD-MM-YYYY
+    const now = new Date();
+    const pad = (n: number) => n.toString().padStart(2, "0");
+    const folderName = `${pad(now.getDate())}-${pad(now.getMonth() + 1)}-${now.getFullYear()}`;
+
+    // 2. Search if folder per tanggal already exists inside parentFolderId
+    const query = `mimeType = 'application/vnd.google-apps.folder' and name = '${folderName}' and '${parentFolderId}' in parents and trashed = false`;
+    const searchUrl = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name)`;
+    
+    console.log(`[Drive Backend] Mencari folder per tanggal '${folderName}' di bawah folder parent: ${parentFolderId}...`);
+    const searchRes = await fetch(searchUrl, {
+      headers: {
+        Authorization: `Bearer ${token}`
+      }
+    });
+
+    if (!searchRes.ok) {
+      const errMsg = await searchRes.text();
+      return res.status(searchRes.status).json({ error: `Gagal mencari folder tanggal di Drive: ${errMsg}` });
+    }
+
+    const searchData = (await searchRes.json()) as { files: Array<{ id: string; name: string }> };
+    let targetFolderId = "";
+
+    if (searchData.files && searchData.files.length > 0) {
+      targetFolderId = searchData.files[0].id;
+      console.log(`[Drive Backend] Folder per tanggal '${folderName}' sudah ada. Menggunakan ID: ${targetFolderId}`);
+    } else {
+      // Create a new folder
+      console.log(`[Drive Backend] Folder per tanggal '${folderName}' tidak ditemukan. Membuat folder baru...`);
+      const createFolderRes = await fetch("https://www.googleapis.com/drive/v3/files", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          name: folderName,
+          mimeType: "application/vnd.google-apps.folder",
+          parents: [parentFolderId]
+        })
+      });
+
+      if (!createFolderRes.ok) {
+        const errMsg = await createFolderRes.text();
+        return res.status(createFolderRes.status).json({ error: `Gagal membuat folder per tanggal: ${errMsg}` });
+      }
+
+      const folderData = (await createFolderRes.json()) as { id: string };
+      targetFolderId = folderData.id;
+      console.log(`[Drive Backend] Folder per tanggal '${folderName}' berhasil dibuat dengan ID: ${targetFolderId}`);
+    }
+
+    // 3. Create file metadata in target dated folder
+    const targetFilename = filename || `Laporan_Kehadiran_Peserta_${Date.now()}.pdf`;
+    const metaRes = await fetch("https://www.googleapis.com/drive/v3/files", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        name: targetFilename,
+        parents: [targetFolderId],
+        mimeType: "application/pdf"
+      })
+    });
+
+    if (!metaRes.ok) {
+      const errMsg = await metaRes.text();
+      return res.status(metaRes.status).json({ error: `Gagal membuat metadata file PDF di Drive: ${errMsg}` });
+    }
+
+    const fileMeta = (await metaRes.json()) as { id: string };
+    const fileId = fileMeta.id;
+
+    // Convert Base64 back to binary Buffer for upload
+    let cleanBase64 = pdfBase64;
+    if (pdfBase64.includes("base64,")) {
+      cleanBase64 = pdfBase64.split("base64,")[1];
+    }
+    const pdfBuffer = Buffer.from(cleanBase64, "base64");
+
+    // 4. Upload standard media body
+    console.log(`[Drive Backend] Mengunggah file PDF '${targetFilename}' ke folder '${folderName}' (ID: ${targetFolderId})...`);
+    const uploadRes = await fetch(`https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`, {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/pdf"
+      },
+      body: pdfBuffer
+    });
+
+    if (!uploadRes.ok) {
+      const errMsg = await uploadRes.text();
+      return res.status(uploadRes.status).json({ error: `Gagal mengunggah konten biner PDF ke Drive: ${errMsg}` });
+    }
+
+    res.json({
+      success: true,
+      message: `File PDF berhasil diunggah ke Google Drive di folder per tanggal '${folderName}'.`,
+      fileId,
+      folderId: targetFolderId,
+      folderName
+    });
+
+  } catch (err: any) {
+    console.error("[Drive Backend] Error uploading PDF to date folder:", err);
+    res.status(500).json({ error: err.message || "Terjadi kesalahan internal saat memproses unggahan PDF ke Drive." });
   }
 });
 

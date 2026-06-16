@@ -290,7 +290,9 @@ export default function App() {
     <div 
       className="min-h-screen text-slate-800 dark:text-slate-100 font-sans flex flex-col transition-all duration-350 relative bg-cover bg-center bg-no-repeat bg-fixed"
       style={{
-        backgroundImage: `linear-gradient(${darkMode ? 'rgba(2, 6, 23, 0.91)' : 'rgba(241, 245, 249, 0.88)'}, ${darkMode ? 'rgba(2, 6, 23, 0.93)' : 'rgba(241, 245, 249, 0.90)'}), url('https://i.ibb.co.com/5WkSVh9y/Gemini-Generated-Image-kvy41okvy41okvy4.png')`
+        backgroundImage: viewMode === "admin"
+          ? `linear-gradient(${darkMode ? 'rgba(15, 23, 42, 0.90)' : 'rgba(241, 245, 249, 0.82)'}, ${darkMode ? 'rgba(15, 23, 42, 0.93)' : 'rgba(241, 245, 249, 0.85)'}), url('https://i.ibb.co.com/V0HgY1Th/Chat-GPT-Image-Jun-16-2026-07-36-56-PM.png')`
+          : `linear-gradient(${darkMode ? 'rgba(2, 6, 23, 0.91)' : 'rgba(241, 245, 249, 0.88)'}, ${darkMode ? 'rgba(2, 6, 23, 0.93)' : 'rgba(241, 245, 249, 0.90)'}), url('https://i.ibb.co.com/5WkSVh9y/Gemini-Generated-Image-kvy41okvy41okvy4.png')`
       }}
     >
       

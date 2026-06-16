@@ -4,7 +4,9 @@ export interface Attendee {
   name: string;
   instansi: string;
   jabatan: string;
-  email: string;
+  jenisKegiatan: string;
+  judulKegiatan: string;
+  email?: string;
   checkInTime: string;
   signatureUrl: string;
   sheetRowIndex?: number;

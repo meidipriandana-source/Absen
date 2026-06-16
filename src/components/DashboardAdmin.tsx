@@ -52,6 +52,18 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
   const [isCreatingResources, setIsCreatingResources] = useState(false);
   const [showConfigSettings, setShowConfigSettings] = useState(false);
   const [showNotificationSettings, setShowNotificationSettings] = useState(false);
+  const [showFormRulesSettings, setShowFormRulesSettings] = useState(false);
+  const [formRules, setFormRules] = useState<{ requiredFields: Record<string, boolean> }>({
+    requiredFields: {
+      "Pelatihan / Diklat": true,
+      "Rapat Internal / Eksternal": true,
+      "Seminar / Sosialisasi / Webinar": true,
+      "Kunjungan / Studi Banding": true,
+      "Apel / Upacara": true,
+      "Lainnya": true,
+    }
+  });
+  const [isSavingFormRules, setIsSavingFormRules] = useState(false);
   const [notificationSettings, setNotificationSettings] = useState({
     telegramEnabled: false,
     telegramBotToken: "",
@@ -135,7 +147,8 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
   const [editNip, setEditNip] = useState("");
   const [editInstansi, setEditInstansi] = useState("");
   const [editJabatan, setEditJabatan] = useState("");
-  const [editEmail, setEditEmail] = useState("");
+  const [editJenisKegiatan, setEditJenisKegiatan] = useState("");
+  const [editJudulKegiatan, setEditJudulKegiatan] = useState("");
   const [isSavingEdit, setIsSavingEdit] = useState(false);
 
   const [deletingAttendee, setDeletingAttendee] = useState<Attendee | null>(null);
@@ -274,6 +287,48 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
       showToast(`Gagal menyimpan: ${error.message}`, "error");
     } finally {
       setIsSavingNotifications(false);
+    }
+  };
+
+  const fetchFormRules = async () => {
+    try {
+      const res = await fetch("/api/form-rules/config");
+      if (res.ok) {
+        const contentType = res.headers.get("content-type") || "";
+        if (contentType.includes("application/json")) {
+          const data = await res.json();
+          setFormRules(data);
+        } else {
+          console.warn("Form rules config response was not JSON.");
+        }
+      }
+    } catch (err) {
+      console.error("Error fetching form rules:", err);
+    }
+  };
+
+  const handleSaveFormRules = async () => {
+    setIsSavingFormRules(true);
+    try {
+      const res = await fetch("/api/form-rules/config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(formRules),
+      });
+      const contentType = res.headers.get("content-type") || "";
+      if (!contentType.includes("application/json")) {
+        throw new Error("Respon server bukan JSON. Silakan periksa koneksi backend Anda.");
+      }
+      if (res.ok) {
+        showToast("Aturan validasi judul kegiatan berhasil disimpan!", "success");
+      } else {
+        const data = await res.json();
+        throw new Error(data.error || "Gagal menyimpan ke server");
+      }
+    } catch (error: any) {
+      showToast(`Gagal menyimpan aturan validasi: ${error.message}`, "error");
+    } finally {
+      setIsSavingFormRules(false);
     }
   };
 
@@ -838,6 +893,7 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
     fetchSessionStatus();
     fetchBackupStatus();
     fetchNotificationSettings();
+    fetchFormRules();
     fetchAttendeesFromSheets(false);
   }, [accessToken]);
 
@@ -913,7 +969,8 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
           NIP: a.nip,
           "Instansi": a.instansi,
           "Jabatan": a.jabatan,
-          Email: a.email,
+          "Jenis Kegiatan": a.jenisKegiatan || a.email || "-",
+          "Judul Kegiatan": a.judulKegiatan || "-",
           "Waktu Hadir": a.checkInTime,
           "Link Tanda Tangan (Drive Thumbs)": a.signatureUrl,
         }));
@@ -927,7 +984,8 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
           { wch: 22 }, // NIP
           { wch: 30 }, // Instansi
           { wch: 20 }, // Jabatan
-          { wch: 22 }, // Email
+          { wch: 25 }, // Jenis Kegiatan
+          { wch: 30 }, // Judul Kegiatan
           { wch: 20 }, // Date
           { wch: 45 }, // Signature Links
         ];
@@ -964,16 +1022,52 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
     try {
       const doc = new jsPDF("l", "mm", "a4"); // landscape format
 
-      // Header Title
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(20);
-      doc.text("LAPORAN RESMI DAFTAR KEHADIRAN PESERTA KEGIATAN", 14, 18);
-      
-      // Metadata block
-      doc.setFont("helvetica", "normal");
-      doc.setFontSize(10);
-      doc.text(`Waktu Cetak: ${new Date().toLocaleString("id-ID")}`, 14, 25);
-      doc.text(`Total Kehadiran: ${targetSource.length} Orang${onlyFiltered ? " (Sesuai Filter)" : ""}`, 14, 30);
+      // Fetch logo first with progress update
+      setPdfProgressText("Mengunduh logo Kaltara...");
+      let logoBase64 = "";
+      try {
+        const logoUrl = "https://i.ibb.co.com/pGQk2Hg/LOGO-KALIMANTAN-UTARA-koleksilogo-com-2.png";
+        const proxyUrl = `/api/proxy-signature?url=${encodeURIComponent(logoUrl)}`;
+        const logoRes = await fetch(proxyUrl);
+        if (logoRes.ok) {
+          const blob = await logoRes.blob();
+          const reader = new FileReader();
+          const p = new Promise<string>((resolve) => {
+            reader.onloadend = () => resolve(reader.result as string);
+            reader.readAsDataURL(blob);
+          });
+          logoBase64 = await p;
+        }
+      } catch (err) {
+        console.error("Gagal mengambil logo Kalimantan Utara:", err);
+      }
+
+      if (logoBase64) {
+        doc.addImage(logoBase64, "PNG", 14, 10, 18, 22);
+        
+        // Header Title
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(20);
+        doc.text("LAPORAN RESMI DAFTAR KEHADIRAN PESERTA KEGIATAN", 44, 18);
+        
+        // Metadata block
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(10);
+        doc.text(`Waktu Cetak: ${new Date().toLocaleString("id-ID")}`, 44, 25);
+        doc.text(`Total Kehadiran: ${targetSource.length} Orang${onlyFiltered ? " (Sesuai Filter)" : ""}`, 44, 30);
+      } else {
+        // Fallback without logo
+        // Header Title
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(20);
+        doc.text("LAPORAN RESMI DAFTAR KEHADIRAN PESERTA KEGIATAN", 14, 18);
+        
+        // Metadata block
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(10);
+        doc.text(`Waktu Cetak: ${new Date().toLocaleString("id-ID")}`, 14, 25);
+        doc.text(`Total Kehadiran: ${targetSource.length} Orang${onlyFiltered ? " (Sesuai Filter)" : ""}`, 14, 30);
+      }
 
       // Pre-download signature images in parallel using our backend proxy
       setPdfProgressText("Mengunduh gambar TTD...");
@@ -983,14 +1077,31 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
 
       await Promise.all(
         targetSource.map(async (a, index) => {
-          if (!a.signatureUrl) return;
+          // Check for signature base64 string first (either inside a.signature or inline a.signatureUrl)
+          const rawSig = a.signature || a.signatureUrl;
+          if (!rawSig) return;
+
+          // 1. If it is already a base64 data URL
+          if (rawSig.startsWith("data:")) {
+            signatureImageMap[index] = rawSig;
+            return;
+          }
+
+          // 2. If it is a base64 string without data: prefix
+          if (/^[a-zA-Z0-9+/=]+$/.test(rawSig.trim()) && rawSig.length > 50) {
+            signatureImageMap[index] = `data:image/png;base64,${rawSig.trim()}`;
+            return;
+          }
+
+          // 3. Otherwise treat as URL and fetch
           try {
-            // Check if local or external
-            const isLocal = a.signatureUrl.startsWith("/api/");
-            const fetchUrl = isLocal ? a.signatureUrl : `/api/proxy-signature?url=${encodeURIComponent(a.signatureUrl)}`;
+            const isLocal = rawSig.startsWith("/api/") || rawSig.startsWith("/");
+            const fetchUrl = isLocal ? rawSig : `/api/proxy-signature?url=${encodeURIComponent(rawSig)}`;
             
             const response = await fetch(fetchUrl, {
-              headers: (accessToken && !isLocal) ? { Authorization: `Bearer ${accessToken}` } : undefined
+              headers: (accessToken && accessToken !== "bypass" && !isLocal) 
+                ? { Authorization: `Bearer ${accessToken}` } 
+                : undefined
             });
             if (!response.ok) return;
             const blob = await response.blob();
@@ -1016,7 +1127,8 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
         a.nip,
         a.instansi,
         a.jabatan,
-        a.email,
+        a.jenisKegiatan || a.email || "-",
+        a.judulKegiatan || "-",
         a.checkInTime,
         "", // Tanda Tangan placeholder cell
       ]);
@@ -1026,24 +1138,25 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
 
       autoTable(doc, {
         startY: 42,
-        head: [["No", "Nama Lengkap", "NIP", "Instansi", "Jabatan", "Alamat Email", "Waktu Hadir", "Tanda Tangan"]],
+        head: [["No", "Nama Lengkap", "NIP", "Instansi", "Jabatan", "Jenis Kegiatan", "Judul Kegiatan", "Waktu Hadir", "Tanda Tangan"]],
         body: tableBody,
         theme: "grid",
         headStyles: { fillColor: [5, 150, 105], textColor: 255, fontStyle: "bold", halign: "center" },
         styles: { fontSize: 8.5, cellPadding: 2, valign: "middle" },
         columnStyles: {
           0: { cellWidth: 10, halign: "center" },
-          1: { cellWidth: 42 },
-          2: { cellWidth: 32 },
-          3: { cellWidth: 42 },
-          4: { cellWidth: 35 },
-          5: { cellWidth: 40 },
-          6: { cellWidth: 33 },
-          7: { cellWidth: 35, minCellHeight: 18 }, // Column 7 is Tanda Tangan, minCellHeight 18 makes it spacious
+          1: { cellWidth: 32 },
+          2: { cellWidth: 28 },
+          3: { cellWidth: 32 },
+          4: { cellWidth: 25 },
+          5: { cellWidth: 35 },
+          6: { cellWidth: 40 },
+          7: { cellWidth: 30 },
+          8: { cellWidth: 35, minCellHeight: 18 }, // Column 8 is Tanda Tangan, minCellHeight 18 makes it spacious
         },
         didDrawCell: (data) => {
-          // If we are in the body section and drawing the "Tanda Tangan" column (index 7)
-          if (data.column.index === 7 && data.cell.section === "body") {
+          // If we are in the body section and drawing the "Tanda Tangan" column (index 8)
+          if (data.column.index === 8 && data.cell.section === "body") {
             const rowIndex = data.row.index;
             const base64Img = signatureImageMap[rowIndex];
             if (base64Img) {
@@ -1101,60 +1214,44 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
 
       // Check if authorized Google session is connected, then back up PDF to Google Drive folder
       let uploadedToDrive = false;
+      let uploadedFolderName = "";
       if (accessToken && accessToken !== "bypass" && driveFolderId) {
         try {
           setPdfProgressText("Mengunggah ke Drive...");
-          updateToast(toastId, { message: "Mengunggah file PDF laporan ke Google Drive..." });
+          updateToast(toastId, { message: "Menghubungi server untuk membuat folder tanggal & mengunggah laporan PDF..." });
           
-          const pdfBlob = doc.output("blob");
+          const pdfBase64DataUri = doc.output("datauristring");
 
-          // 1. Create file metadata in target folder
-          const metaRes = await fetch("https://www.googleapis.com/drive/v3/files", {
+          const driveRes = await fetch("/api/upload-pdf-to-date-folder", {
             method: "POST",
             headers: {
-              Authorization: `Bearer ${accessToken}`,
               "Content-Type": "application/json"
             },
             body: JSON.stringify({
-              name: filename,
-              parents: [driveFolderId],
-              mimeType: "application/pdf"
+              pdfBase64: pdfBase64DataUri,
+              filename: filename,
+              accessToken,
+              driveFolderId
             })
           });
 
-          if (!metaRes.ok) {
-            const errTxt = await metaRes.text();
-            throw new Error(`Gagal membuat metadata PDF di Google Drive: ${errTxt}`);
+          if (!driveRes.ok) {
+            const errData = await driveRes.json();
+            throw new Error(errData.error || "Gagal mengunggah biner PDF ke Google Drive di server.");
           }
 
-          const metaData = await metaRes.json();
-          const fileId = metaData.id;
-
-          // 2. Upload the standard PDF body
-          const uploadRes = await fetch(`https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`, {
-            method: "PATCH",
-            headers: {
-              Authorization: `Bearer ${accessToken}`,
-              "Content-Type": "application/pdf"
-            },
-            body: pdfBlob
-          });
-
-          if (!uploadRes.ok) {
-            const errTxt = await uploadRes.text();
-            throw new Error(`Gagal mengunggah biner PDF ke Google Drive: ${errTxt}`);
-          }
-
+          const driveData = await driveRes.json();
           uploadedToDrive = true;
+          uploadedFolderName = driveData.folderName || "";
         } catch (driveErr: any) {
-          console.error("Gagal mengunggah PDF ke Google Drive:", driveErr);
-          showToast(`Gagal mengunggah ke Google Drive: ${driveErr.message || driveErr}`, "warning", 6000);
+          console.error("Gagal mengunggah PDF ke Google Drive via backend:", driveErr);
+          showToast(`Gagal mencadangkan ke Google Drive: ${driveErr.message || driveErr}`, "warning", 6000);
         }
       }
       
       dismissToast(toastId);
       if (uploadedToDrive) {
-        showToast("Laporan PDF berhasil diunduh lokal & dicadangkan secara otomatis ke Google Drive!", "success");
+        showToast(`Laporan PDF berhasil diunduh lokal & dicadangkan secara otomatis ke Google Drive di folder per tanggal [${uploadedFolderName || "Harian"}]!`, "success", 6000);
       } else {
         if (accessToken === "bypass") {
           showToast("Laporan PDF diunduh! (Penyimpanan ke Google Drive dilewati karena menggunakan PIN bypass lokal).", "success");
@@ -1178,12 +1275,13 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
     setEditNip(attendee.nip);
     setEditInstansi(attendee.instansi);
     setEditJabatan(attendee.jabatan);
-    setEditEmail(attendee.email);
+    setEditJenisKegiatan(attendee.jenisKegiatan || attendee.email || "-");
+    setEditJudulKegiatan(attendee.judulKegiatan || "-");
   };
 
   const handleSaveEdit = async () => {
     if (!editingAttendee) return;
-    if (!editName.trim() || !editNip.trim() || !editInstansi.trim() || !editJabatan.trim()) {
+    if (!editName.trim() || !editNip.trim() || !editInstansi.trim() || !editJabatan.trim() || !editJenisKegiatan.trim() || !editJudulKegiatan.trim()) {
       showToast("Semua kolom bertanda * wajib diisi.", "warning");
       return;
     }
@@ -1200,7 +1298,8 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
           nip: editNip,
           instansi: editInstansi,
           jabatan: editJabatan,
-          email: editEmail
+          jenisKegiatan: editJenisKegiatan,
+          judulKegiatan: editJudulKegiatan
         })
       });
 
@@ -1507,7 +1606,12 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
   return (
     <div className="space-y-6">
       {/* Header controls */}
-      <div className="flex flex-col lg:flex-row gap-4 items-start lg:items-center justify-between bg-slate-900 text-white p-6 rounded-2xl shadow-xl">
+      <div 
+        className="flex flex-col lg:flex-row gap-4 items-start lg:items-center justify-between text-white p-6 rounded-2xl shadow-xl bg-cover bg-center bg-no-repeat relative"
+        style={{
+          backgroundImage: `linear-gradient(to bottom, rgba(15, 23, 42, 0.88), rgba(15, 23, 42, 0.94)), url('https://i.ibb.co.com/V0HgY1Th/Chat-GPT-Image-Jun-16-2026-07-36-56-PM.png')`
+        }}
+      >
         <div>
           <div className="flex items-center gap-2">
             <h1 className="text-xl font-bold tracking-tight">Dashboard Pemantauan</h1>
@@ -1691,6 +1795,7 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
             onClick={() => {
               setShowConfigSettings(!showConfigSettings);
               setShowNotificationSettings(false);
+              setShowFormRulesSettings(false);
             }}
             className={`bg-slate-800 border ${showConfigSettings ? 'border-emerald-500 bg-slate-850' : 'border-slate-700'} text-slate-200 hover:bg-slate-750 p-2.5 rounded-xl text-xs font-medium cursor-pointer flex items-center gap-1.5`}
             title="Pengaturan integrasi Google Sheets"
@@ -1702,11 +1807,24 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
             onClick={() => {
               setShowNotificationSettings(!showNotificationSettings);
               setShowConfigSettings(false);
+              setShowFormRulesSettings(false);
             }}
             className={`bg-slate-800 border ${showNotificationSettings ? 'border-emerald-500 bg-slate-850' : 'border-slate-700'} text-slate-200 hover:bg-slate-750 p-2.5 rounded-xl text-xs font-medium cursor-pointer flex items-center gap-1.5`}
             title="Pengaturan Notifikasi Ringkasan Harian"
           >
             <Bell className="w-4 h-4 text-slate-400" /> Notifikasi Ringkasan
+          </button>
+
+          <button
+            onClick={() => {
+              setShowFormRulesSettings(!showFormRulesSettings);
+              setShowNotificationSettings(false);
+              setShowConfigSettings(false);
+            }}
+            className={`bg-slate-800 border ${showFormRulesSettings ? 'border-emerald-500 bg-slate-850' : 'border-slate-700'} text-slate-200 hover:bg-slate-750 p-2.5 rounded-xl text-xs font-medium cursor-pointer flex items-center gap-1.5`}
+            title="Aturan validasi input formulir absensi"
+          >
+            <CalendarCheck2 className="w-4 h-4 text-slate-400" /> Aturan Validasi
           </button>
 
           <button
@@ -2315,6 +2433,84 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
               ) : (
                 <>
                   <CheckCircle2 className="w-3.5 h-3.5" /> Simpan Integrasi Notifikasi
+                </>
+              )}
+            </button>
+          </div>
+        </motion.div>
+      )}
+
+      {showFormRulesSettings && (
+        <motion.div 
+          initial={{ opacity: 0, height: 0 }} 
+          animate={{ opacity: 1, height: "auto" }} 
+          className="bg-slate-50 border border-slate-200 rounded-2xl p-5 space-y-5 shadow-sm"
+        >
+          <div className="flex items-center justify-between">
+            <h3 className="font-bold text-sm text-slate-850 flex items-center gap-2">
+              <CalendarCheck2 className="w-4 h-4 text-indigo-500 shrink-0" /> Aturan Validasi Judul Kegiatan Absensi
+            </h3>
+            <button 
+              onClick={() => setShowFormRulesSettings(false)}
+              className="text-slate-400 hover:text-slate-600 cursor-pointer"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+
+          <div className="bg-indigo-50/70 border border-indigo-100 p-4 rounded-xl text-[11px] text-indigo-950 leading-relaxed flex gap-2.5 items-start">
+            <Info className="w-4 h-4 text-indigo-500 shrink-0 mt-0.5" />
+            <div>
+              <p className="font-semibold text-xs text-indigo-900">Konfigurasi Kolom Judul Kegiatan</p>
+              <p className="mt-0.5">
+                Tentukan apakah opsi <strong>Judul Kegiatan</strong> wajib diisi (Wajib) atau bersifat opsional (Tidak Wajib) oleh peserta saat melakukan absen berdasarkan opsi <strong>Jenis Kegiatan</strong> yang mereka pilih di formulir pendaftaran.
+              </p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {Object.keys(formRules?.requiredFields || {}).map((jenis) => (
+              <div key={jenis} className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-xs flex items-center justify-between">
+                <div>
+                  <p className="font-semibold text-xs text-slate-700">{jenis}</p>
+                  <p className="text-[10px] text-slate-400 mt-0.5 font-medium">
+                    Status: {formRules?.requiredFields[jenis] ? (
+                      <span className="text-rose-500 font-bold">Wajib Diisi *</span>
+                    ) : (
+                      <span className="text-slate-400">Opsional</span>
+                    )}
+                  </p>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer select-none ml-2">
+                  <input 
+                    type="checkbox" 
+                    className="sr-only peer"
+                    checked={formRules?.requiredFields[jenis] || false}
+                    onChange={(e) => {
+                      const updatedFields = { ...(formRules?.requiredFields || {}), [jenis]: e.target.checked };
+                      setFormRules(prev => ({ ...prev!, requiredFields: updatedFields }));
+                    }}
+                  />
+                  <div className="w-8 h-4.5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-3.5 after:w-3.5 after:transition-all peer-checked:bg-emerald-500 font-sans"></div>
+                </label>
+              </div>
+            ))}
+          </div>
+
+          <div className="flex justify-end pt-2">
+            <button
+              type="button"
+              onClick={handleSaveFormRules}
+              disabled={isSavingFormRules}
+              className="bg-emerald-600 hover:bg-emerald-700 hover:shadow-lg disabled:bg-slate-300 text-white font-bold py-2.5 px-6 rounded-xl text-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+            >
+              {isSavingFormRules ? (
+                <>
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Sedang menyimpan...
+                </>
+              ) : (
+                <>
+                  <CheckCircle2 className="w-3.5 h-3.5" /> Simpan Aturan Validasi
                 </>
               )}
             </button>
@@ -2946,7 +3142,7 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
           <div>
             {/* Unified Wide Data Table (Smooth horizontal scrolling on all screen sizes) */}
             <div className="overflow-x-auto w-full">
-              <table className="w-full text-left border-collapse min-w-[800px]">
+              <table className="w-full text-left border-collapse min-w-[1100px]">
                 <thead>
                   <tr className="bg-slate-50 border-b border-slate-100 text-[11px] uppercase tracking-wider font-semibold text-slate-500">
                     <th className="py-3 px-4 w-12 text-center">No</th>
@@ -2954,6 +3150,8 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
                     <th className="py-3 px-4 w-36">NIP</th>
                     <th className="py-3 px-4">Instansi</th>
                     <th className="py-3 px-4 text-slate-500">Jabatan</th>
+                    <th className="py-3 px-4 text-slate-500">Jenis Kegiatan</th>
+                    <th className="py-3 px-4 text-slate-500">Judul Kegiatan</th>
                     <th className="py-3 px-4 w-36">Check-In</th>
                     <th className="py-3 px-4 w-28 text-center">Tandatangan</th>
                     <th className="py-3 px-4 w-24 text-center">Aksi</th>
@@ -3006,6 +3204,14 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
                         <td className="py-2.5 px-4 font-mono text-[10.5px] text-slate-600">{a.nip}</td>
                         <td className="py-2.5 px-4 text-slate-600">{a.instansi}</td>
                         <td className="py-2.5 px-4 text-slate-600">{a.jabatan}</td>
+                        <td className="py-2.5 px-4 text-slate-600">
+                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-indigo-50 text-indigo-755 border border-indigo-100/60 font-sans">
+                            {a.jenisKegiatan || a.email || "-"}
+                          </span>
+                        </td>
+                        <td className="py-2.5 px-4 text-slate-600 font-semibold truncate max-w-[150px]" title={a.judulKegiatan || "-"}>
+                          {a.judulKegiatan || "-"}
+                        </td>
                         <td className="py-2.5 px-4 font-mono text-[10.5px] text-slate-500">{a.checkInTime}</td>
                         <td className="py-2 px-4 text-center">
                           {a.signatureUrl ? (
@@ -3158,8 +3364,12 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
                       <span className="text-xs font-bold text-slate-700 block">{p.jabatan || "-"}</span>
                     </div>
                     <div className="space-y-0.5 col-span-2 border-t border-slate-200/50 pt-2.5">
-                      <span className="text-[10px] text-slate-400 font-semibold block uppercase">Alamat Email Kerja</span>
-                      <span className="text-xs font-semibold text-slate-600 block">{p.email || "-"}</span>
+                      <span className="text-[10px] text-slate-400 font-semibold block uppercase">Jenis Kegiatan</span>
+                      <span className="text-xs font-bold text-slate-700 block">{p.jenisKegiatan || p.email || "-"}</span>
+                    </div>
+                    <div className="space-y-0.5 col-span-2 border-t border-slate-200/50 pt-2.5">
+                      <span className="text-[10px] text-slate-400 font-semibold block uppercase">Judul Kegiatan</span>
+                      <span className="text-xs font-bold text-slate-700 block">{p.judulKegiatan || "-"}</span>
                     </div>
                   </div>
                 </div>
@@ -3420,12 +3630,30 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
 
               <div>
                 <label className="block text-xs font-semibold text-slate-600 mb-1">
-                  Alamat Email (Opsional)
+                  Jenis Kegiatan <span className="text-rose-500">*</span>
+                </label>
+                <select
+                  value={editJenisKegiatan}
+                  onChange={(e) => setEditJenisKegiatan(e.target.value)}
+                  className="w-full px-3 py-2 border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 focus:outline-none transition bg-white font-medium font-sans cursor-pointer"
+                >
+                  <option value="Pelatihan / Diklat">Pelatihan / Diklat</option>
+                  <option value="Rapat Internal / Eksternal">Rapat Internal / Eksternal</option>
+                  <option value="Seminar / Sosialisasi / Webinar">Seminar / Sosialisasi / Webinar</option>
+                  <option value="Kunjungan / Studi Banding">Kunjungan / Studi Banding</option>
+                  <option value="Apel / Upacara">Apel / Upacara</option>
+                  <option value="Lainnya">Lainnya</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">
+                  Judul Kegiatan <span className="text-rose-500">*</span>
                 </label>
                 <input
-                  type="email"
-                  value={editEmail}
-                  onChange={(e) => setEditEmail(e.target.value)}
+                  type="text"
+                  value={editJudulKegiatan}
+                  onChange={(e) => setEditJudulKegiatan(e.target.value)}
                   className="w-full px-3 py-2 border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 focus:outline-none transition bg-slate-50/50 font-medium font-sans"
                 />
               </div>
