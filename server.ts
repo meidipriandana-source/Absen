@@ -1,14 +1,30 @@
 import express from "express";
 import path from "path";
 import fs from "fs";
+import os from "os";
 import { createServer as createViteServer } from "vite";
 import nodemailer from "nodemailer";
 import * as XLSX from "xlsx";
 
 const app = express();
 const PORT = 3000;
-const SESSION_FILE = path.join(process.cwd(), "admin_session.json");
-const NOTIFICATION_FILE = path.join(process.cwd(), "notification_settings.json");
+
+// Detect if running under serverless/read-only environment (writable path finder helper)
+function getWritablePath(filename: string): string {
+  const localPath = path.join(process.cwd(), filename);
+  try {
+    const testFile = path.join(process.cwd(), `.write-test-${Math.random().toString(36).substring(7)}.tmp`);
+    fs.writeFileSync(testFile, "test");
+    fs.unlinkSync(testFile);
+    return localPath;
+  } catch (err) {
+    // If process.cwd() is read-only (e.g. Vercel), fall back to system temp directory (os.tmpdir())
+    return path.join(os.tmpdir(), filename);
+  }
+}
+
+const SESSION_FILE = getWritablePath("admin_session.json");
+const NOTIFICATION_FILE = getWritablePath("notification_settings.json");
 
 interface NotificationSettings {
   telegramEnabled: boolean;
@@ -293,7 +309,7 @@ interface AdminSession {
   isSessionActive?: boolean;
 }
 
-const ATTENDEES_FILE = path.join(process.cwd(), "attendees.json");
+const ATTENDEES_FILE = getWritablePath("attendees.json");
 
 interface LocalAttendee {
   no: number;
@@ -1119,7 +1135,7 @@ export interface BackupHistoryInfo {
   history: BackupLog[];
 }
 
-const BACKUP_HISTORY_FILE = path.join(process.cwd(), "backup_history.json");
+const BACKUP_HISTORY_FILE = getWritablePath("backup_history.json");
 
 function loadBackupHistory(): BackupHistoryInfo {
   try {
