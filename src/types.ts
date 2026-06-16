@@ -14,4 +14,6 @@ export interface DashboardStats {
   totalCount: number;
   byInstitution: { name: string; value: number }[];
   timeline: { time: string; count: number }[];
+  hourly?: { hour: string; count: number }[];
+  cumulative?: { time: string; total: number; countAtMinute?: number }[];
 }

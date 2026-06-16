@@ -4,5 +4,157 @@
 @theme {
   --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+
+  --color-slate-150: #edf2f7;
+  --color-slate-450: #576574;
+  --color-indigo-150: #e0e7ff;
+}
+
+/* Global Dark Mode mapping for full-stack compatibility without changing thousands of Tailwind classes */
+.dark {
+  color-scheme: dark;
+}
+
+/* Background updates */
+.dark body,
+.dark .bg-slate-50,
+.dark .bg-slate-50\/30,
+.dark .bg-slate-50\/40,
+.dark .bg-slate-50\/50,
+.dark .bg-slate-100 {
+  background-color: #020617 !important; /* slate-950 */
+}
+
+.dark .bg-white,
+.dark .bg-white\/80 {
+  background-color: #0f172a !important; /* slate-900 */
+}
+
+.dark .bg-slate-100\/55,
+.dark .bg-slate-100\/50,
+.dark .bg-slate-150\/30,
+.dark .bg-slate-200 {
+  background-color: #1e293b !important; /* slate-800 */
+}
+
+/* Input elements */
+.dark input[type="text"],
+.dark input[type="password"],
+.dark input[type="email"],
+.dark input[type="search"],
+.dark select,
+.dark textarea {
+  background-color: #1e293b !important; /* slate-800 */
+  color: #f8fafc !important; /* slate-50 */
+  border-color: #334155 !important; /* slate-700 */
+}
+
+.dark input::placeholder {
+  color: #64748b !important; /* slate-500 */
+}
+
+/* Text overrides */
+.dark .text-slate-900,
+.dark .text-slate-800,
+.dark .text-slate-700,
+.dark .text-gray-900,
+.dark .text-slate-850,
+.dark h1:not(.text-white),
+.dark h2:not(.text-white),
+.dark h3:not(.text-white),
+.dark h4:not(.text-white) {
+  color: #f1f5f9 !important; /* slate-100 */
+}
+
+.dark .text-slate-650,
+.dark .text-slate-600,
+.dark .text-slate-550,
+.dark .text-slate-500,
+.dark .text-gray-500 {
+  color: #94a3b8 !important; /* slate-400 */
+}
+
+.dark .text-slate-400,
+.dark .text-slate-450 {
+  color: #64748b !important; /* slate-500 */
+}
+
+/* Border overrides */
+.dark .border,
+.dark .border-slate-100,
+.dark .border-slate-150,
+.dark .border-slate-150\/60,
+.dark .border-slate-200,
+.dark .border-slate-200\/30 {
+  border-color: #1e293b !important; /* slate-800 */
+}
+
+.dark .border-b,
+.dark .border-t,
+.dark .border-r,
+.dark .border-l {
+  border-color: #1e293b !important; /* slate-800 */
+}
+
+/* Table elements */
+.dark th {
+  background-color: #1e293b !important; /* slate-800 */
+  color: #cbd5e1 !important; /* slate-300 */
+  border-color: #334155 !important;
+}
+
+.dark td {
+  border-color: #1e293b !important; /* slate-800 */
+  color: #cbd5e1 !important;
+}
+
+.dark tr:hover td {
+  background-color: #1e293b90 !important;
+}
+
+/* Status alerts and panels (using soft dark variations) */
+.dark .bg-emerald-50 {
+  background-color: rgba(6, 78, 59, 0.4) !important;
+  border-color: rgba(16, 185, 129, 0.3) !important;
+  color: #a7f3d0 !important;
+}
+
+.dark .bg-amber-50 {
+  background-color: rgba(120, 53, 4, 0.4) !important;
+  border-color: rgba(245, 158, 11, 0.3) !important;
+  color: #fde68a !important;
+}
+
+.dark .bg-rose-50 {
+  background-color: rgba(136, 19, 55, 0.4) !important;
+  border-color: rgba(244, 63, 94, 0.3) !important;
+  color: #fecdd3 !important;
+}
+
+.dark .bg-indigo-50,
+.dark .bg-indigo-50\/40 {
+  background-color: rgba(49, 46, 129, 0.3) !important;
+  border-color: rgba(99, 102, 241, 0.3) !important;
+}
+
+/* Sync last background colors */
+.dark .bg-slate-900 {
+  background-color: #0d1527 !important;
+  border-color: #1e293b !important;
+}
+
+.dark .bg-slate-950 {
+  background-color: #020617 !important;
+}
+
+/* Fix signature pad components under dark mode to remain crisp */
+.dark #signature-container {
+  background-color: #ffffff10 !important;
+  border-color: #334155 !important;
+}
+
+.dark .toast {
+  background-color: #0f172a !important;
+  border-color: #1e293b !important;
 }
 

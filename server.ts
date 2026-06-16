@@ -2,10 +2,283 @@ import express from "express";
 import path from "path";
 import fs from "fs";
 import { createServer as createViteServer } from "vite";
+import nodemailer from "nodemailer";
 
 const app = express();
 const PORT = 3000;
 const SESSION_FILE = path.join(process.cwd(), "admin_session.json");
+const NOTIFICATION_FILE = path.join(process.cwd(), "notification_settings.json");
+
+interface NotificationSettings {
+  telegramEnabled: boolean;
+  telegramBotToken: string;
+  telegramChatId: string;
+  whatsappEnabled: boolean;
+  whatsappApiProvider: "fonnte" | "webhook";
+  whatsappToken: string;
+  whatsappTarget: string;
+  emailEnabled: boolean;
+  smtpHost: string;
+  smtpPort: number;
+  smtpSecure: boolean;
+  smtpUser: string;
+  smtpPass: string;
+  emailRecipient: string;
+}
+
+const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = {
+  telegramEnabled: false,
+  telegramBotToken: "",
+  telegramChatId: "",
+  whatsappEnabled: false,
+  whatsappApiProvider: "fonnte",
+  whatsappToken: "",
+  whatsappTarget: "",
+  emailEnabled: false,
+  smtpHost: "smtp.gmail.com",
+  smtpPort: 465,
+  smtpSecure: true,
+  smtpUser: "",
+  smtpPass: "",
+  emailRecipient: "",
+};
+
+function loadNotificationSettings(): NotificationSettings {
+  try {
+    if (fs.existsSync(NOTIFICATION_FILE)) {
+      const data = fs.readFileSync(NOTIFICATION_FILE, "utf-8");
+      return { ...DEFAULT_NOTIFICATION_SETTINGS, ...JSON.parse(data) };
+    }
+  } catch (err) {
+    console.error("Error reading notification settings file:", err);
+  }
+  return DEFAULT_NOTIFICATION_SETTINGS;
+}
+
+function saveNotificationSettings(settings: Partial<NotificationSettings>) {
+  try {
+    const existing = loadNotificationSettings();
+    const updated = { ...existing, ...settings };
+    fs.writeFileSync(NOTIFICATION_FILE, JSON.stringify(updated, null, 2), "utf-8");
+  } catch (err) {
+    console.error("Error writing notification settings file:", err);
+  }
+}
+
+// Helper to get Indonesian format date
+function getIndonesianDate(): string {
+  const date = new Date();
+  const days = ["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"];
+  const months = [
+    "Januari", "Februari", "Maret", "April", "Mei", "Juni",
+    "Juli", "Agustus", "September", "Oktober", "November", "Desember"
+  ];
+  return `${days[date.getDay()]}, ${date.getDate()} ${months[date.getMonth()]} ${date.getFullYear()}`;
+}
+
+async function sendTelegramNotification(token: string, chatId: string, text: string) {
+  const url = `https://api.telegram.org/bot${token}/sendMessage`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      chat_id: chatId,
+      text: text,
+      parse_mode: "Markdown",
+    }),
+  });
+  if (!res.ok) {
+    const errorBody = await res.text();
+    throw new Error(`Telegram API Error: ${errorBody}`);
+  }
+  return await res.json();
+}
+
+async function sendWhatsAppNotification(provider: "fonnte" | "webhook", token: string, target: string, text: string, attendeesList: LocalAttendee[]) {
+  if (provider === "fonnte") {
+    const res = await fetch("https://api.fonnte.com/send", {
+      method: "POST",
+      headers: {
+        "Authorization": token,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        target: target,
+        message: text,
+      }),
+    });
+    if (!res.ok) {
+      const errorBody = await res.text();
+      throw new Error(`Fonnte WhatsApp API Error: ${errorBody}`);
+    }
+    return await res.json();
+  } else {
+    const res = await fetch(target, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        source: "Diklit RSUD dr.H.Jusuf.SK Smart Presence",
+        event: "session_ended",
+        timestamp: new Date().toISOString(),
+        total_attendees: attendeesList.length,
+        summary_text: text,
+        attendees: attendeesList.map(a => ({
+          no: a.no,
+          nip: a.nip,
+          name: a.name,
+          instansi: a.instansi,
+          jabatan: a.jabatan,
+          email: a.email,
+          checkInTime: a.checkInTime
+        }))
+      }),
+    });
+    if (!res.ok) {
+      const errorBody = await res.text();
+      throw new Error(`Webhook Error (${res.status}): ${errorBody}`);
+    }
+    return { success: true };
+  }
+}
+
+async function sendEmailNotification(settings: NotificationSettings, text: string, html: string) {
+  const transporter = nodemailer.createTransport({
+    host: settings.smtpHost,
+    port: Number(settings.smtpPort),
+    secure: settings.smtpSecure,
+    auth: {
+      user: settings.smtpUser,
+      pass: settings.smtpPass,
+    },
+  });
+
+  const mailOptions = {
+    from: `"E-Absensi Diklit" <${settings.smtpUser || "noreply@rsudjusufsk.go.id"}>`,
+    to: settings.emailRecipient,
+    subject: `[Laporan Absensi] Diklit RSUD dr.H.Jusuf.SK - ${getIndonesianDate()}`,
+    text: text,
+    html: html,
+  };
+
+  return await transporter.sendMail(mailOptions);
+}
+
+async function triggerAutoNotification() {
+  const settings = loadNotificationSettings();
+  const list = loadLocalAttendees();
+  
+  if (list.length === 0) {
+    console.log("[Notification] No attendees registered. Skipping daily summary notification.");
+    return;
+  }
+
+  const dateStr = getIndonesianDate();
+  const listDetails = list
+    .map((a, idx) => `${idx + 1}. ${a.name} (NIP: ${a.nip}) - ${a.instansi} (${a.jabatan}) - Jam: ${a.checkInTime.split(" ")[1]}`)
+    .join("\n");
+
+  const textMessage = `*RINGKASAN KEHADIRAN HARIAN*
+*Diklit RSUD dr.H.Jusuf.SK*
+
+📅 Tanggal: ${dateStr}
+👥 Total Kehadiran: ${list.length} Orang
+
+*Daftar Hadir:*
+${listDetails}
+
+_Laporan ini dikirim otomatis setelah sesi absensi HP dinonaktifkan oleh Admin._`;
+
+  // Process Telegram
+  if (settings.telegramEnabled && settings.telegramBotToken && settings.telegramChatId) {
+    try {
+      console.log("[Notification] Sending Telegram summary report...");
+      await sendTelegramNotification(settings.telegramBotToken, settings.telegramChatId, textMessage);
+      console.log("[Notification] Telegram notification sent successfully.");
+    } catch (err) {
+      console.error("[Notification] Telegram notification dispatch failure:", err);
+    }
+  }
+
+  // Process WhatsApp
+  if (settings.whatsappEnabled && settings.whatsappTarget) {
+    try {
+      console.log("[Notification] Sending WhatsApp summary report...");
+      await sendWhatsAppNotification(settings.whatsappApiProvider, settings.whatsappToken, settings.whatsappTarget, textMessage, list);
+      console.log("[Notification] WhatsApp notification sent successfully.");
+    } catch (err) {
+      console.error("[Notification] WhatsApp notification dispatch failure:", err);
+    }
+  }
+
+  // Process Email
+  if (settings.emailEnabled && settings.emailRecipient) {
+    try {
+      console.log("[Notification] Sending Email summary report...");
+      const htmlRows = list
+        .map(
+          (a, idx) => `
+        <tr>
+          <td style="padding: 10px; border: 1px solid #cbd5e1; text-align: center;">${idx + 1}</td>
+          <td style="padding: 10px; border: 1px solid #cbd5e1; font-weight: bold; color: #1e293b;">${a.name}</td>
+          <td style="padding: 10px; border: 1px solid #cbd5e1; font-family: monospace;">${a.nip}</td>
+          <td style="padding: 10px; border: 1px solid #cbd5e1;">${a.instansi}</td>
+          <td style="padding: 10px; border: 1px solid #cbd5e1;">${a.jabatan}</td>
+          <td style="padding: 10px; border: 1px solid #cbd5e1; text-align: center; color: #64748b;">${a.checkInTime.split(" ")[1]}</td>
+        </tr>`
+        )
+        .join("");
+
+      const htmlEmailMessage = `
+      <div style="font-family: sans-serif; max-width: 700px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff;">
+        <div style="background-color: #1e1b4b; padding: 24px; border-radius: 10px 10px 0 0; text-align: center; color: #ffffff;">
+          <h2 style="margin: 0; font-size: 20px; font-weight: 800; tracking-tight: -0.025em;">DIKLIT RSUD dr.H.Jusuf.SK</h2>
+          <p style="margin: 6px 0 0 0; font-size: 13px; color: #c7d2fe; text-transform: uppercase; font-weight: 600; letter-spacing: 0.05em;">Smart Presence System</p>
+        </div>
+        <div style="padding: 24px;">
+          <p style="font-size: 14px; color: #334155; font-weight: 500;">Yth. Admin Diklit RSUD dr.H.Jusuf.SK,</p>
+          <p style="font-size: 14px; color: #334155; line-height: 1.5;">Berikut ini adalah laporan ringkasan kehadiran harian peserta yang telah direkam dan dirangkum secara lengkap setelah sesi absensi dinonaktifkan:</p>
+          
+          <table style="width: 100%; border-collapse: collapse; margin: 20px 0; font-size: 14px; background-color: #f8fafc; border-radius: 8px; border: 1px solid #f1f5f9;">
+            <tr>
+              <td style="padding: 12px; border-bottom: 1px solid #f1f5f9; font-weight: bold; color: #64748b;">Hari/Tanggal</td>
+              <td style="padding: 12px; border-bottom: 1px solid #f1f5f9; text-align: right; font-weight: bold; color: #0f172a;">${dateStr}</td>
+            </tr>
+            <tr>
+              <td style="padding: 12px; font-weight: bold; color: #64748b;">Total Hadir</td>
+              <td style="padding: 12px; text-align: right; font-weight: 800; color: #4f46e5; font-size: 18px;">${list.length} Orang</td>
+            </tr>
+          </table>
+          
+          <h3 style="font-size: 15px; font-weight: 700; color: #1e1b4b; border-bottom: 2px solid #e2e8f0; padding-bottom: 6px; margin-top: 30px;">Daftar Detail Kehadiran Peserta</h3>
+          <table style="width: 100%; border-collapse: collapse; font-size: 12px; text-align: left; margin-top: 12px;">
+            <thead>
+              <tr style="background-color: #f1f5f9; color: #334155; font-weight: bold;">
+                <th style="padding: 10px; border: 1px solid #cbd5e1; text-align: center; width: 40px;">No</th>
+                <th style="padding: 10px; border: 1px solid #cbd5e1;">Nama</th>
+                <th style="padding: 10px; border: 1px solid #cbd5e1;">NIP</th>
+                <th style="padding: 10px; border: 1px solid #cbd5e1;">Instansi</th>
+                <th style="padding: 10px; border: 1px solid #cbd5e1;">Jabatan</th>
+                <th style="padding: 10px; border: 1px solid #cbd5e1; text-align: center; width: 80px;">Waktu</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${htmlRows}
+            </tbody>
+          </table>
+        </div>
+        <div style="background-color: #f8fafc; padding: 18px; border-radius: 0 0 10px 10px; text-align: center; color: #64748b; font-size: 11px; border-top: 1px solid #e2e8f0; line-height: 1.4;">
+          Laporan dibuat secara otomatis oleh <strong>Sistem Smart Presence Diklit RSUD dr.H.Jusuf.SK</strong>.<br />
+          Harap tidak membalas email otomatis ini.
+        </div>
+      </div>`;
+
+      await sendEmailNotification(settings, textMessage, htmlEmailMessage);
+      console.log("[Notification] Email notification sent successfully.");
+    } catch (err) {
+      console.error("[Notification] Email notification dispatch failure:", err);
+    }
+  }
+}
 
 // Middleware to parse JSON payloads with Base64 signature images (up to 10MB)
 app.use(express.json({ limit: "10mb" }));
@@ -128,13 +401,20 @@ app.get("/api/session-status", (req, res) => {
 app.post("/api/save-token", (req, res) => {
   const { accessToken, spreadsheetId, driveFolderId, isSessionActive } = req.body;
   const current = loadSession();
+  const wasActive = current ? !!current.isSessionActive : false;
+  const nextActive = isSessionActive !== undefined ? !!isSessionActive : (current ? !!current.isSessionActive : true);
   
   saveSession(
     accessToken !== undefined ? accessToken : (current ? current.accessToken : null),
     spreadsheetId || (current ? current.spreadsheetId : undefined),
     driveFolderId || (current ? current.driveFolderId : undefined),
-    isSessionActive !== undefined ? !!isSessionActive : (current ? !!current.isSessionActive : true)
+    nextActive
   );
+
+  if (wasActive && !nextActive) {
+    triggerAutoNotification().catch(e => console.error("Auto notification error:", e));
+  }
+
   res.json({ status: "success", message: "Admin session registered on server." });
 });
 
@@ -175,13 +455,97 @@ app.post("/api/admin/local-login", (req, res) => {
 // Admin clears token
 app.post("/api/clear-token", (req, res) => {
   const current = loadSession();
+  const wasActive = current ? !!current.isSessionActive : false;
   if (current) {
     // Keep credentials, just deactivate active public check-in mode.
     saveSession(current.accessToken, current.spreadsheetId, current.driveFolderId, false);
   } else {
     clearSession();
   }
+
+  if (wasActive) {
+    triggerAutoNotification().catch(e => console.error("Auto notification error:", e));
+  }
+
   res.json({ status: "success", message: "Admin session removed." });
+});
+
+// Get notification configuration
+app.get("/api/notifications/config", (req, res) => {
+  const current = loadNotificationSettings();
+  res.json(current);
+});
+
+// Save notification configuration
+app.post("/api/notifications/config", (req, res) => {
+  saveNotificationSettings(req.body);
+  res.json({ success: true, message: "Pengaturan notifikasi berhasil disimpan." });
+});
+
+// Test notification
+app.post("/api/notifications/test", async (req, res) => {
+  const { channel, settings } = req.body;
+  if (!channel) {
+    return res.status(400).json({ error: "Channel is required for testing." });
+  }
+
+  const dateStr = getIndonesianDate();
+  const testMessage = `🧪 *TES KONEKSI NOTIFIKASI*
+*Diklit RSUD dr.H.Jusuf.SK*
+
+Selamat! Layanan notifikasi absensi harian Anda telah aktif dan terhubung dengan sukses.
+
+📅 Tanggal Tes: ${dateStr}
+⏱️ Waktu: ${new Date().toLocaleTimeString()}
+✅ Status: Sukses Terhubung
+
+_Pesan simulasi diset dari Panel Pengaturan Admin._`;
+
+  const dummyList = [
+    { no: 1, name: "Peserta Simulasi 1", nip: "19950302202611002", instansi: "Bagian Diklit RSUD", jabatan: "Peserta Pelatihan", email: "simulasi@rsudjusufsk.go.id", checkInTime: `${new Date().toLocaleDateString()} 09:15:30`, signature: "", signatureUrl: "" }
+  ];
+
+  try {
+    if (channel === "telegram") {
+      if (!settings.telegramBotToken || !settings.telegramChatId) {
+        throw new Error("Token Bot dan Chat ID Telegram wajib diisi.");
+      }
+      await sendTelegramNotification(settings.telegramBotToken, settings.telegramChatId, testMessage);
+    } else if (channel === "whatsapp") {
+      if (!settings.whatsappTarget) {
+        throw new Error("Target nomor/url WhatsApp wajib diisi.");
+      }
+      await sendWhatsAppNotification(settings.whatsappApiProvider, settings.whatsappToken, settings.whatsappTarget, testMessage, dummyList as any);
+    } else if (channel === "email") {
+      if (!settings.emailRecipient || !settings.smtpHost || !settings.smtpUser || !settings.smtpPass) {
+        throw new Error("Data SMTP Lengkap & Penerima Email wajib diisi.");
+      }
+      const testHtml = `
+      <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff;">
+        <div style="background-color: #4f46e5; padding: 24px; border-radius: 8px 8px 0 0; text-align: center; color: #ffffff;">
+          <h2 style="margin: 0; font-size: 18px; font-weight: bold;">TES INTEGRASI EMAIL SUKSES</h2>
+          <p style="margin: 5px 0 0 0; font-size: 12px; color: #e0e7ff;">Diklit RSUD dr.H.Jusuf.SK</p>
+        </div>
+        <div style="padding: 24px; text-align: center; color: #334155;">
+          <p style="font-size: 15px; font-weight: bold; color: #0f172a; margin-bottom: 8px;">Selamat!</p>
+          <p style="font-size: 13px; line-height: 1.5; color: #475569;">Konfigurasi server SMTP Anda berhasil terhubung dengan sistem Smart Presence Diklit RSUD dr.H.Jusuf.SK.</p>
+          <div style="display: inline-block; background-color: #ecfdf5; border: 1px solid #a7f3d0; color: #065f46; font-size: 12px; font-weight: bold; padding: 8px 16px; border-radius: 20px; margin: 15px 0;">
+            Status: TERHUBUNG / CONNECTED
+          </div>
+          <p style="font-size: 11px; color: #94a3b8; margin-top: 15px;">Waktu tes: ${new Date().toLocaleString()}</p>
+        </div>
+      </div>
+      `;
+      await sendEmailNotification(settings, testMessage, testHtml);
+    } else {
+      throw new Error(`Saluran tidak dikenal: ${channel}`);
+    }
+
+    res.json({ success: true, message: `Berhasil mengirimkan tes notifikasi ke ${channel.toUpperCase()}!` });
+  } catch (err: any) {
+    console.error(`Test notification failed (${channel}):`, err);
+    res.status(500).json({ error: err.message || "Gagal menghubungkan ke layanan tujuan." });
+  }
 });
 
 // Get all attendees (stripped of huge base64 signatures to be ultra-fast)

@@ -3,7 +3,7 @@ import {
   motion, AnimatePresence 
 } from "motion/react";
 import { 
-  User, CheckCircle2, ShieldAlert, Users, QrCode, ClipboardCheck, Sparkles, LogIn, ArrowRight
+  User, CheckCircle2, ShieldAlert, Users, QrCode, ClipboardCheck, Sparkles, LogIn, ArrowRight, Sun, Moon
 } from "lucide-react";
 import AttendeeForm from "./components/AttendeeForm";
 import DashboardAdmin from "./components/DashboardAdmin";
@@ -14,6 +14,31 @@ type ViewMode = "form" | "admin";
 
 export default function App() {
   const [viewMode, setViewMode] = useState<ViewMode>("form");
+  const [darkMode, setDarkMode] = useState(() => {
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem("theme");
+      if (saved) return saved === "dark";
+      return window.matchMedia("(prefers-color-scheme: dark)").matches;
+    }
+    return false;
+  });
+
+  useEffect(() => {
+    if (darkMode) {
+      document.documentElement.classList.add("dark");
+    } else {
+      document.documentElement.classList.remove("dark");
+    }
+  }, [darkMode]);
+
+  const toggleDarkMode = () => {
+    setDarkMode(prev => {
+      const next = !prev;
+      localStorage.setItem("theme", next ? "dark" : "light");
+      return next;
+    });
+  };
+
   const [isAdminLoggedIn, setIsAdminLoggedIn] = useState(() => {
     if (typeof window !== "undefined") {
       return localStorage.getItem("admin_local_logged_in") === "true";
@@ -157,7 +182,12 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-800 font-sans flex flex-col transition-all duration-300">
+    <div 
+      className="min-h-screen text-slate-800 dark:text-slate-100 font-sans flex flex-col transition-all duration-350 relative bg-cover bg-center bg-no-repeat bg-fixed"
+      style={{
+        backgroundImage: `linear-gradient(${darkMode ? 'rgba(2, 6, 23, 0.91)' : 'rgba(241, 245, 249, 0.88)'}, ${darkMode ? 'rgba(2, 6, 23, 0.93)' : 'rgba(241, 245, 249, 0.90)'}), url('https://i.ibb.co.com/5WkSVh9y/Gemini-Generated-Image-kvy41okvy41okvy4.png')`
+      }}
+    >
       
       {/* Dynamic Deep Indigo Header styled precisely based on user UI specifications */}
       <header className="sticky top-0 z-40 bg-slate-900 border-b border-slate-950 px-4 md:px-8 py-3.5 flex items-center justify-between shadow-md">
@@ -166,39 +196,53 @@ export default function App() {
             <ClipboardCheck className="w-5 h-5" />
           </div>
           <div>
-            <h1 className="text-sm md:text-base font-extrabold text-white tracking-tight leading-none">AbsenKita</h1>
+            <h1 className="text-sm md:text-base font-extrabold text-white tracking-tight leading-none">Diklit RSUD dr.H.Jusuf.SK</h1>
             <span className="inline-block text-[9px] text-indigo-300 font-semibold tracking-wider uppercase mt-1">Smart Presence System</span>
           </div>
         </div>
 
-        {/* Tab switcher Controls / Quick Actions */}
-        <div className="flex items-center gap-1.5 bg-slate-950/40 p-1 rounded-xl border border-white/5">
+        {/* Tab switcher & Dark Mode Controls */}
+        <div className="flex items-center gap-2.5">
+          <div className="flex items-center gap-1.5 bg-slate-950/40 p-1 rounded-xl border border-white/5">
+            <button
+              onClick={() => {
+                setViewMode("form");
+                setSuccessTicket(null); // Close active success card
+              }}
+              className={`px-4 py-1.8 rounded-lg text-xs font-bold transition-all relative cursor-pointer flex items-center gap-1.5 ${
+                viewMode === "form" 
+                  ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/20" 
+                  : "text-slate-400 hover:text-slate-200"
+              }`}
+            >
+              <User className="w-3.5 h-3.5" />
+              Isi Absen
+            </button>
+            
+            <button
+              onClick={() => setViewMode("admin")}
+              className={`px-4 py-1.8 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                viewMode === "admin" 
+                  ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/20" 
+                  : "text-slate-400 hover:text-slate-200"
+              }`}
+            >
+              Dashboard Admin
+              {isPublicSessionActive && (
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse self-center" title="Sesi publik aktif"></span>
+              )}
+            </button>
+          </div>
+
           <button
-            onClick={() => {
-              setViewMode("form");
-              setSuccessTicket(null); // Close active success card
-            }}
-            className={`px-4 py-1.8 rounded-lg text-xs font-bold transition-all relative cursor-pointer flex items-center gap-1.5 ${
-              viewMode === "form" 
-                ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/20" 
-                : "text-slate-400 hover:text-slate-200"
-            }`}
+            onClick={toggleDarkMode}
+            className="p-2.5 rounded-xl bg-slate-950/40 hover:bg-slate-950/70 border border-white/5 text-slate-400 hover:text-amber-400 cursor-pointer transition-all duration-200 flex items-center justify-center shadow-inner active:scale-90"
+            title={darkMode ? "Ubah ke Mode Terang (Light Mode)" : "Ubah ke Mode Gelap (Dark Mode)"}
           >
-            <User className="w-3.5 h-3.5" />
-            Isi Absen
-          </button>
-          
-          <button
-            onClick={() => setViewMode("admin")}
-            className={`px-4 py-1.8 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
-              viewMode === "admin" 
-                ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/20" 
-                : "text-slate-400 hover:text-slate-200"
-            }`}
-          >
-            Dashboard Admin
-            {isPublicSessionActive && (
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse self-center" title="Sesi publik aktif"></span>
+            {darkMode ? (
+              <Sun className="w-3.5 h-3.5 text-amber-400" />
+            ) : (
+              <Moon className="w-3.5 h-3.5 text-indigo-300" />
             )}
           </button>
         </div>
@@ -354,7 +398,15 @@ export default function App() {
       </main>
 
       {/* Humble Footer branding */}
-      <footer className="py-5 border-t border-slate-150/50 bg-white text-center text-[10px] text-slate-450 mt-10">
+      <footer 
+        className="py-5 border-t border-slate-150/50 bg-white text-center text-[10px] text-slate-450 mt-10"
+        style={{
+          height: '83.5px',
+          width: '355px',
+          marginLeft: '0px',
+          marginTop: '29px'
+        }}
+      >
         <p className="font-medium">AbsenKehadiran digital &middot; Google Workspace Cloud Integration</p>
         <p className="text-[9px] text-slate-400 mt-1">Google Sheets &amp; Drive Cloud Integration Active</p>
       </footer>

@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from "react";
 import { 
-  Users, School, CalendarCheck2, ShieldCheck, RefreshCw, Download, 
+  Users, School, CalendarCheck2, ShieldCheck, RefreshCw, Download, FileDown,
   Search, ShieldAlert, ChevronRight, LogOut, CheckCircle2, QrCode, 
-  Settings, ExternalLink, Trash2, Key, Info, HelpCircle, Loader2, X, Pencil
+  Settings, ExternalLink, Trash2, Key, Info, HelpCircle, Loader2, X, Pencil,
+  Bell, Mail, Send, MessageSquare
 } from "lucide-react";
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, 
@@ -39,11 +40,39 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
   const [hasAccessError, setHasAccessError] = useState(false);
   const [isCreatingResources, setIsCreatingResources] = useState(false);
   const [showConfigSettings, setShowConfigSettings] = useState(false);
+  const [showNotificationSettings, setShowNotificationSettings] = useState(false);
+  const [notificationSettings, setNotificationSettings] = useState({
+    telegramEnabled: false,
+    telegramBotToken: "",
+    telegramChatId: "",
+    whatsappEnabled: false,
+    whatsappApiProvider: "fonnte" as "fonnte" | "webhook",
+    whatsappToken: "",
+    whatsappTarget: "",
+    emailEnabled: false,
+    smtpHost: "smtp.gmail.com",
+    smtpPort: 465,
+    smtpSecure: true,
+    smtpUser: "",
+    smtpPass: "",
+    emailRecipient: "",
+  });
+  const [isSavingNotifications, setIsSavingNotifications] = useState(false);
+  const [testingChannel, setTestingChannel] = useState<string | null>(null);
 
   const [attendees, setAttendees] = useState<Attendee[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [isAutoRefreshEnabled, setIsAutoRefreshEnabled] = useState<boolean>(() => {
+    return localStorage.getItem("admin_auto_refresh_enabled") !== "false";
+  });
+  const [autoRefreshInterval, setAutoRefreshInterval] = useState<number>(() => {
+    const stored = localStorage.getItem("admin_auto_refresh_interval");
+    return stored ? parseInt(stored, 10) : 5; // default to 5 seconds
+  });
+  const [isBackgroundFetching, setIsBackgroundFetching] = useState<boolean>(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const [trendViewType, setTrendViewType] = useState<"minute" | "hour" | "cumulative">("cumulative");
 
   const showToast = (message: string, type: Toast["type"] = "info", duration = 3500) => {
     const id = Math.random().toString(36).substring(2, 9);
@@ -74,8 +103,10 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
   const [showQrModal, setShowQrModal] = useState(false);
   const [showConfirmClear, setShowConfirmClear] = useState(false);
   const [clearConfirmationText, setClearConfirmationText] = useState("");
+  const [showConfirmToggleSession, setShowConfirmToggleSession] = useState(false);
   const [isExportingPdf, setIsExportingPdf] = useState(false);
   const [pdfProgressText, setPdfProgressText] = useState("");
+  const [showPdfOptions, setShowPdfOptions] = useState(false);
 
   const [editingAttendee, setEditingAttendee] = useState<Attendee | null>(null);
   const [editName, setEditName] = useState("");
@@ -89,6 +120,65 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
   const [isDeleting, setIsDeleting] = useState(false);
 
   const publicUrl = window.location.origin;
+
+  const fetchNotificationSettings = async () => {
+    try {
+      const res = await fetch("/api/notifications/config");
+      if (res.ok) {
+        const data = await res.json();
+        setNotificationSettings(data);
+      }
+    } catch (err) {
+      console.error("Error fetching notification settings:", err);
+    }
+  };
+
+  const handleSaveNotificationSettings = async () => {
+    setIsSavingNotifications(true);
+    try {
+      const res = await fetch("/api/notifications/config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(notificationSettings),
+      });
+      if (res.ok) {
+        showToast("Pengaturan notifikasi berhasil disimpan!", "success");
+      } else {
+        throw new Error("Gagal menyimpan ke server");
+      }
+    } catch (error: any) {
+      showToast(`Gagal menyimpan: ${error.message}`, "error");
+    } finally {
+      setIsSavingNotifications(false);
+    }
+  };
+
+  const handleTestNotification = async (channel: "telegram" | "whatsapp" | "email") => {
+    setTestingChannel(channel);
+    const toastId = showToast(`Sedang mengirimkan tes notifikasi ${channel.toUpperCase()}...`, "loading", 0);
+    try {
+      const res = await fetch("/api/notifications/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          channel,
+          settings: notificationSettings,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        updateToast(toastId, { message: `Sukses! ${data.message || 'Pesan tes terkirim.'}`, type: "success" });
+        setTimeout(() => dismissToast(toastId), 3000);
+      } else {
+        throw new Error(data.error || "Gagal menghubungkan");
+      }
+    } catch (error: any) {
+      updateToast(toastId, { message: `Tes Gagal: ${error.message}`, type: "error" });
+      setTimeout(() => dismissToast(toastId), 5000);
+    } finally {
+      setTestingChannel(null);
+    }
+  };
 
   // 1. Fetch active session state from backend
   const fetchSessionStatus = async () => {
@@ -110,8 +200,12 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
   };
 
   // 2. Load Attendee list from local Express backend
-  const fetchAttendeesFromSheets = async () => {
-    setIsLoading(true);
+  const fetchAttendeesFromSheets = async (isBackground = false) => {
+    if (isBackground) {
+      setIsBackgroundFetching(true);
+    } else {
+      setIsLoading(true);
+    }
     setHasAccessError(false);
     try {
       const res = await fetch("/api/attendees");
@@ -133,19 +227,36 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
         setHasAccessError(true);
       }
     } finally {
-      setIsLoading(false);
+      if (isBackground) {
+        setIsBackgroundFetching(false);
+      } else {
+        setIsLoading(false);
+      }
     }
   };
 
   // Toggle Session state on backend (Enable Public Check-ins)
   const handleToggleSession = async () => {
     setIsActivatingSession(true);
+    const toastId = showToast(
+      isSessionActive 
+        ? "Sedang menutup sesi absensi secara manual..." 
+        : "Sedang mengaktifkan sesi absensi peserta...",
+      "loading",
+      0
+    );
     try {
       if (isSessionActive) {
         // Disable
         const res = await fetch("/api/clear-token", { method: "POST" });
         if (res.ok) {
           setIsSessionActive(false);
+          updateToast(toastId, { 
+            message: "Sesi absensi HP berhasil ditutup & report otomatis terkirim!", 
+            type: "success" 
+          });
+        } else {
+          throw new Error("Respon server tidak valid saat menonaktifkan sesi.");
         }
       } else {
         // Enable by uploading access token along with dynamic sheet pointers
@@ -161,12 +272,48 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
         });
         if (res.ok) {
           setIsSessionActive(true);
+          updateToast(toastId, { 
+            message: "Sesi absensi HP berhasil dibuka secara instan!", 
+            type: "success" 
+          });
+        } else {
+          throw new Error("Respon server tidak valid saat mengaktifkan sesi.");
         }
       }
-    } catch (err) {
+      setTimeout(() => dismissToast(toastId), 3500);
+    } catch (err: any) {
       console.error("Toggle session error:", err);
+      updateToast(toastId, { 
+        message: `Gagal mengubah sesi: ${err.message || err}`, 
+        type: "error" 
+      });
+      setTimeout(() => dismissToast(toastId), 4500);
     } finally {
       setIsActivatingSession(false);
+    }
+  };
+
+  // Helper for manual data synchronization with Toast
+  const [isSyncingManually, setIsSyncingManually] = useState(false);
+  const handleManualSync = async () => {
+    setIsSyncingManually(true);
+    const toastId = showToast("Sinkronisasi real-time dengan Google Sheets...", "loading", 0);
+    try {
+      await fetchAttendeesFromSheets();
+      updateToast(toastId, { 
+        message: "Data peserta berhasil diperbarui ke kondisi terbaru!", 
+        type: "success" 
+      });
+      setTimeout(() => dismissToast(toastId), 3000);
+    } catch (err: any) {
+      console.error("Sync error:", err);
+      updateToast(toastId, { 
+        message: `Gagal menyinkronkan data: ${err.message || "Masalah koneksi"}`, 
+        type: "error" 
+      });
+      setTimeout(() => dismissToast(toastId), 4000);
+    } finally {
+      setIsSyncingManually(false);
     }
   };
 
@@ -360,14 +507,20 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
   // Polling hook
   useEffect(() => {
     fetchSessionStatus();
-    if (accessToken) {
-      fetchAttendeesFromSheets();
-      const interval = setInterval(() => {
-        fetchAttendeesFromSheets();
-      }, 10000); // 10s auto refresh
-      return () => clearInterval(interval);
-    }
-  }, [accessToken, spreadsheetId]);
+    fetchNotificationSettings();
+    fetchAttendeesFromSheets(false);
+  }, [accessToken]);
+
+  // Dynamic automatic refresh polling interval
+  useEffect(() => {
+    if (!isAutoRefreshEnabled) return;
+
+    const interval = setInterval(() => {
+      fetchAttendeesFromSheets(true);
+    }, autoRefreshInterval * 1000);
+
+    return () => clearInterval(interval);
+  }, [isAutoRefreshEnabled, autoRefreshInterval]);
 
   // Excel Export
   const exportToExcel = () => {
@@ -420,8 +573,9 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
   };
 
   // PDF Export using jsPDF AutoTable
-  const exportToPdf = async () => {
-    if (attendees.length === 0) {
+  const exportToPdf = async (onlyFiltered = false) => {
+    const targetSource = onlyFiltered ? filteredAttendees : attendees;
+    if (targetSource.length === 0) {
       showToast("Belum ada data peserta untuk diekspor!", "warning");
       return;
     }
@@ -442,7 +596,7 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
       doc.setFont("helvetica", "normal");
       doc.setFontSize(10);
       doc.text(`Waktu Cetak: ${new Date().toLocaleString("id-ID")}`, 14, 25);
-      doc.text(`Total Kehadiran: ${attendees.length} Orang`, 14, 30);
+      doc.text(`Total Kehadiran: ${targetSource.length} Orang${onlyFiltered ? " (Sesuai Filter)" : ""}`, 14, 30);
 
       // Pre-download signature images in parallel using our backend proxy
       setPdfProgressText("Mengunduh gambar TTD...");
@@ -451,7 +605,7 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
       const signatureImageMap: Record<number, string> = {};
 
       await Promise.all(
-        attendees.map(async (a, index) => {
+        targetSource.map(async (a, index) => {
           if (!a.signatureUrl) return;
           try {
             // Check if local or external
@@ -479,7 +633,7 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
       );
 
       // Format rows (add empty cell at the end for signature drawing)
-      const tableBody = attendees.map((a, idx) => [
+      const tableBody = targetSource.map((a, idx) => [
         idx + 1,
         a.name,
         a.nip,
@@ -662,10 +816,62 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
       .map(([time, count]) => ({ time, count }))
       .sort((a, b) => a.time.localeCompare(b.time));
 
+    // Grouping by hourly blocks (e.g. "08:00", "09:00", "10:00")
+    const hourlyBlocks: Record<string, number> = {};
+    attendees.forEach((a) => {
+      try {
+        const parts = a.checkInTime.split(" ")[1];
+        if (parts) {
+          const hour = `${parts.split(":")[0].padStart(2, "0")}:00`;
+          hourlyBlocks[hour] = (hourlyBlocks[hour] || 0) + 1;
+        } else {
+          hourlyBlocks["00:00"] = (hourlyBlocks["00:00"] || 0) + 1;
+        }
+      } catch (err) {
+        hourlyBlocks["Lainnya"] = (hourlyBlocks["Lainnya"] || 0) + 1;
+      }
+    });
+
+    const hourly = Object.entries(hourlyBlocks)
+      .map(([hour, count]) => ({ hour, count }))
+      .sort((a, b) => a.hour.localeCompare(b.hour));
+
+    // Cumulative attendance in Real-time (sorted chronologically)
+    const sorted = [...attendees].sort((a, b) => {
+      const timeA = new Date(a.checkInTime).getTime() || 0;
+      const timeB = new Date(b.checkInTime).getTime() || 0;
+      return timeA - timeB;
+    });
+
+    const minuteCounts: Record<string, number> = {};
+    sorted.forEach((a) => {
+      try {
+        const parts = a.checkInTime.split(" ")[1];
+        const timeKey = parts ? parts.substring(0, 5) : "00:05";
+        minuteCounts[timeKey] = (minuteCounts[timeKey] || 0) + 1;
+      } catch (e) {
+        minuteCounts["00:00"] = (minuteCounts["00:00"] || 0) + 1;
+      }
+    });
+
+    const sortedMinutes = Object.entries(minuteCounts).sort((a, b) => a[0].localeCompare(b[0]));
+
+    let totalAccum = 0;
+    const cumulative = sortedMinutes.map(([time, count]) => {
+      totalAccum += count;
+      return {
+        time,
+        total: totalAccum,
+        countAtMinute: count
+      };
+    });
+
     return {
       totalCount: attendees.length,
       byInstitution,
       timeline,
+      hourly,
+      cumulative,
     };
   };
 
@@ -715,34 +921,40 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
           )}
         </div>
 
-        <div className="flex flex-wrap gap-2.5 w-full lg:w-auto">
-          {/* Public session toggle */}
-          <button
-            onClick={handleToggleSession}
-            disabled={isActivatingSession}
-            className={`px-4 py-2.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 cursor-pointer border transition-all ${
-              isSessionActive 
-                ? "bg-amber-500/15 border-amber-500 text-amber-400 hover:bg-amber-500/20" 
-                : "bg-emerald-600 border-transparent text-white hover:bg-emerald-700 hover:shadow-lg hover:shadow-emerald-950/20"
-            }`}
-          >
-            {isActivatingSession ? (
-              <>
-                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                Wait...
-              </>
-            ) : isSessionActive ? (
-              <>
-                <ShieldAlert className="w-3.5 h-3.5" />
-                Sesi HP Peserta: Aktif (Matikan)
-              </>
-            ) : (
-              <>
-                <QrCode className="w-3.5 h-3.5" />
-                Aktifkan Sesi HP Peserta
-              </>
-            )}
-          </button>
+        <div className="flex flex-wrap gap-2.5 w-full lg:w-auto items-center">
+          {/* Public session toggle as an elegant Switch */}
+          <div className="flex items-center gap-3 bg-slate-800 border border-slate-700/80 rounded-xl px-3.5 py-1.5 hover:bg-slate-750 transition-all">
+            <div className="flex flex-col text-left">
+              <span className="text-[9px] uppercase font-bold text-slate-400 tracking-wider">Sesi Absensi HP</span>
+              <span className={`text-[11px] font-bold ${isSessionActive ? "text-emerald-400" : "text-amber-450"}`}>
+                {isSessionActive ? "Terbuka" : "Tertutup"}
+              </span>
+            </div>
+            
+            <button
+              onClick={() => setShowConfirmToggleSession(true)}
+              disabled={isActivatingSession}
+              className={`relative inline-flex h-5.5 w-10 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none disabled:opacity-50 ${
+                isSessionActive ? "bg-emerald-500" : "bg-slate-600"
+              }`}
+              title={isSessionActive ? "Klik untuk menutup sesi absensi secara instan" : "Klik untuk membuka sesi absensi secara instan"}
+            >
+              <span className="sr-only">Toggle Sesi Absensi</span>
+              <span
+                className={`pointer-events-none relative inline-block h-4.5 w-4.5 transform rounded-full bg-white shadow-md transition duration-200 ease-in-out flex items-center justify-center ${
+                  isSessionActive ? "translate-x-4.5" : "translate-x-0"
+                }`}
+              >
+                {isActivatingSession ? (
+                  <RefreshCw className="w-2.5 h-2.5 text-slate-600 animate-spin" />
+                ) : isSessionActive ? (
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                ) : (
+                  <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
+                )}
+              </span>
+            </button>
+          </div>
 
           {isSessionActive && (
             <button
@@ -755,11 +967,80 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
           )}
 
           <button
-            onClick={() => setShowConfigSettings(!showConfigSettings)}
+            onClick={handleManualSync}
+            disabled={isSyncingManually}
+            className="bg-slate-800 border border-slate-700 text-slate-200 hover:bg-slate-750 p-2.5 rounded-xl text-xs font-medium cursor-pointer flex items-center gap-1.5"
+            title="Sinkronkan data peserta secara manual dari Google Sheets"
+          >
+            <RefreshCw className={`w-4 h-4 text-emerald-400 ${isSyncingManually || isBackgroundFetching ? "animate-spin" : ""}`} /> 
+            {isSyncingManually ? "Menyinkronkan..." : "Sinkron Data"}
+          </button>
+
+          {/* Auto Refresh Real-Time Panel */}
+          <div className="bg-slate-800 border border-slate-700 p-1 rounded-xl flex items-center gap-1.5 text-xs font-medium text-slate-200">
+            <button
+              onClick={() => {
+                const newVal = !isAutoRefreshEnabled;
+                setIsAutoRefreshEnabled(newVal);
+                localStorage.setItem("admin_auto_refresh_enabled", String(newVal));
+                showToast(newVal ? `Auto-Refresh diaktifkan (${autoRefreshInterval}s)` : "Auto-Refresh dimatikan", "info", 1500);
+              }}
+              className={`px-2 py-1.5 rounded-lg flex items-center gap-1.5 transition-all cursor-pointer ${
+                isAutoRefreshEnabled 
+                  ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" 
+                  : "hover:bg-slate-700 text-slate-400 border border-transparent"
+              }`}
+              title="Aktifkan/Matikan Auto-Refresh Real-Time"
+            >
+              <span className={`w-2 h-2 rounded-full ${isAutoRefreshEnabled ? "bg-emerald-500 animate-pulse" : "bg-slate-500"}`}></span>
+              <span>Auto-Refresh</span>
+            </button>
+            
+            {isAutoRefreshEnabled && (
+              <select
+                value={autoRefreshInterval}
+                onChange={(e) => {
+                  const val = parseInt(e.target.value, 10);
+                  setAutoRefreshInterval(val);
+                  localStorage.setItem("admin_auto_refresh_interval", String(val));
+                  showToast(`Interval auto-refresh diubah ke ${val} detik`, "info", 1500);
+                }}
+                className="bg-slate-900 border border-slate-700 text-slate-300 text-[11px] rounded-lg px-2 py-1 focus:outline-none focus:border-emerald-500 cursor-pointer"
+                title="Pilih Interval Auto-Refresh"
+              >
+                <option value="3">3s</option>
+                <option value="5">5s</option>
+                <option value="10">10s</option>
+                <option value="30">30s</option>
+                <option value="60">60s</option>
+              </select>
+            )}
+
+            {isBackgroundFetching && (
+              <span className="text-[10px] text-emerald-400 px-1 italic animate-pulse">syncing...</span>
+            )}
+          </div>
+
+          <button
+            onClick={() => {
+              setShowConfigSettings(!showConfigSettings);
+              setShowNotificationSettings(false);
+            }}
             className={`bg-slate-800 border ${showConfigSettings ? 'border-emerald-500 bg-slate-850' : 'border-slate-700'} text-slate-200 hover:bg-slate-750 p-2.5 rounded-xl text-xs font-medium cursor-pointer flex items-center gap-1.5`}
             title="Pengaturan integrasi Google Sheets"
           >
             <Settings className="w-4 h-4 text-slate-400" /> Pengaturan Sheet
+          </button>
+
+          <button
+            onClick={() => {
+              setShowNotificationSettings(!showNotificationSettings);
+              setShowConfigSettings(false);
+            }}
+            className={`bg-slate-800 border ${showNotificationSettings ? 'border-emerald-500 bg-slate-850' : 'border-slate-700'} text-slate-200 hover:bg-slate-750 p-2.5 rounded-xl text-xs font-medium cursor-pointer flex items-center gap-1.5`}
+            title="Pengaturan Notifikasi Ringkasan Harian"
+          >
+            <Bell className="w-4 h-4 text-slate-400" /> Notifikasi Ringkasan
           </button>
 
           <button
@@ -909,6 +1190,292 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
         </motion.div>
       )}
 
+      {showNotificationSettings && (
+        <motion.div 
+          initial={{ opacity: 0, height: 0 }} 
+          animate={{ opacity: 1, height: "auto" }} 
+          className="bg-slate-50 border border-slate-200 rounded-2xl p-5 space-y-5 shadow-sm"
+        >
+          <div className="flex items-center justify-between">
+            <h3 className="font-bold text-sm text-slate-850 flex items-center gap-2">
+              <Bell className="w-4 h-4 text-emerald-500 shrink-0" /> Integrasi Notifikasi Laporan Absensi Harian Otomatis
+            </h3>
+            <button 
+              onClick={() => setShowNotificationSettings(false)}
+              className="text-slate-400 hover:text-slate-600 cursor-pointer"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+
+          <div className="bg-indigo-50/70 border border-indigo-100 p-4 rounded-xl text-[11px] text-indigo-950 leading-relaxed flex gap-2.5 items-start">
+            <Info className="w-4 h-4 text-indigo-500 shrink-0 mt-0.5" />
+            <div>
+              <p className="font-semibold text-xs text-indigo-900">Sistem Summary Otomatis Setelah Sesi Berakhir</p>
+              <p className="mt-0.5">
+                Ketika Anda menonaktifkan <strong>Sesi Absensi HP Peserta</strong>, system secara otomatis mengumpulkan daftar hadir harian dan mengirimkan rekapnya ke grup Telegram, nomor WhatsApp, atau email admin yang diaktifkan di bawah ini.
+              </p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">
+            {/* Telegram Channel */}
+            <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs flex flex-col justify-between">
+              <div className="space-y-3">
+                <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+                  <span className="font-bold text-xs text-slate-800 flex items-center gap-1.5">
+                    <MessageSquare className="w-4 h-4 text-sky-500" /> Telegram Group/Channel
+                  </span>
+                  <label className="relative inline-flex items-center cursor-pointer select-none">
+                    <input 
+                      type="checkbox" 
+                      className="sr-only peer"
+                      checked={notificationSettings.telegramEnabled}
+                      onChange={(e) => setNotificationSettings(prev => ({ ...prev, telegramEnabled: e.target.checked }))}
+                    />
+                    <div className="w-8 h-4.5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-3.5 after:w-3.5 after:transition-all peer-checked:bg-sky-500"></div>
+                    <span className="text-[10px] font-semibold text-slate-500 ml-1.5">
+                      {notificationSettings.telegramEnabled ? "Aktif" : "Nonaktif"}
+                    </span>
+                  </label>
+                </div>
+
+                <div className="space-y-2 text-xs">
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase tracking-wider font-semibold text-slate-400 block font-medium">Token Bot Telegram</label>
+                    <input 
+                      type="text"
+                      disabled={!notificationSettings.telegramEnabled}
+                      value={notificationSettings.telegramBotToken}
+                      onChange={(e) => setNotificationSettings(prev => ({ ...prev, telegramBotToken: e.target.value }))}
+                      placeholder="123456789:ABCdefGhIJKlmNoPQRsT"
+                      className="w-full bg-slate-50/50 border border-slate-200 rounded-lg px-2.5 py-1.5 font-mono text-[11px] outline-none focus:bg-white focus:ring-1 focus:ring-sky-500 disabled:opacity-55"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase tracking-wider font-semibold text-slate-400 block font-medium">Chat ID Penerima</label>
+                    <input 
+                      type="text"
+                      disabled={!notificationSettings.telegramEnabled}
+                      value={notificationSettings.telegramChatId}
+                      onChange={(e) => setNotificationSettings(prev => ({ ...prev, telegramChatId: e.target.value.trim() }))}
+                      placeholder="-1001234567890"
+                      className="w-full bg-slate-50/50 border border-slate-200 rounded-lg px-2.5 py-1.5 font-mono text-[11px] outline-none focus:bg-white focus:ring-1 focus:ring-sky-500 disabled:opacity-55"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="pt-3 mt-4 border-t border-slate-100 flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => handleTestNotification("telegram")}
+                  disabled={!notificationSettings.telegramEnabled || testingChannel !== null}
+                  className="text-[11px] font-bold text-sky-600 hover:text-sky-755 disabled:opacity-40 flex items-center gap-1 cursor-pointer"
+                >
+                  <Send className="w-3 h-3" /> Kirim Tes Telegram
+                </button>
+              </div>
+            </div>
+
+            {/* WhatsApp Channel */}
+            <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs flex flex-col justify-between">
+              <div className="space-y-3">
+                <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+                  <span className="font-bold text-xs text-slate-800 flex items-center gap-1.5">
+                    <MessageSquare className="w-4 h-4 text-emerald-500" /> WhatsApp Gateway
+                  </span>
+                  <label className="relative inline-flex items-center cursor-pointer select-none">
+                    <input 
+                      type="checkbox" 
+                      className="sr-only peer"
+                      checked={notificationSettings.whatsappEnabled}
+                      onChange={(e) => setNotificationSettings(prev => ({ ...prev, whatsappEnabled: e.target.checked }))}
+                    />
+                    <div className="w-8 h-4.5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-3.5 after:w-3.5 after:transition-all peer-checked:bg-emerald-500"></div>
+                    <span className="text-[10px] font-semibold text-slate-500 ml-1.5">
+                      {notificationSettings.whatsappEnabled ? "Aktif" : "Nonaktif"}
+                    </span>
+                  </label>
+                </div>
+
+                <div className="space-y-2 text-xs">
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase tracking-wider font-semibold text-slate-400 block font-medium">Portal / Gateway API</label>
+                    <select
+                      disabled={!notificationSettings.whatsappEnabled}
+                      value={notificationSettings.whatsappApiProvider}
+                      onChange={(e) => setNotificationSettings(prev => ({ ...prev, whatsappApiProvider: e.target.value as "fonnte" | "webhook" }))}
+                      className="w-full bg-slate-50/50 border border-slate-200 rounded-lg px-2 py-1.5 outline-none focus:bg-white focus:ring-1 focus:ring-emerald-500 disabled:opacity-55"
+                    >
+                      <option value="fonnte">Fonnte (Indonesia Gateway)</option>
+                      <option value="webhook">Generic URL Webhook (Post)</option>
+                    </select>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase tracking-wider font-semibold text-slate-400 block font-medium">
+                      {notificationSettings.whatsappApiProvider === "fonnte" ? "Token API Fonnte" : "API Token Header (Opsional)"}
+                    </label>
+                    <input 
+                      type="text"
+                      disabled={!notificationSettings.whatsappEnabled}
+                      value={notificationSettings.whatsappToken}
+                      onChange={(e) => setNotificationSettings(prev => ({ ...prev, whatsappToken: e.target.value }))}
+                      placeholder={notificationSettings.whatsappApiProvider === "fonnte" ? "t0k3nWAdanF0nnt3" : "Bearer ..."}
+                      className="w-full bg-slate-50/50 border border-slate-200 rounded-lg px-2.5 py-1.5 font-mono text-[11px] outline-none focus:bg-white focus:ring-1 focus:ring-emerald-500 disabled:opacity-55"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase tracking-wider font-semibold text-slate-400 block font-medium">
+                      {notificationSettings.whatsappApiProvider === "fonnte" ? "No Tujuan / ID Grup WA" : "URL Webhook Penerima"}
+                    </label>
+                    <input 
+                      type="text"
+                      disabled={!notificationSettings.whatsappEnabled}
+                      value={notificationSettings.whatsappTarget}
+                      onChange={(e) => setNotificationSettings(prev => ({ ...prev, whatsappTarget: e.target.value.trim() }))}
+                      placeholder={notificationSettings.whatsappApiProvider === "fonnte" ? "08123456789 atau group@g.us" : "https://api.domain.com/rekap"}
+                      className="w-full bg-slate-50/50 border border-slate-200 rounded-lg px-2.5 py-1.5 font-mono text-[11px] outline-none focus:bg-white focus:ring-1 focus:ring-emerald-500 disabled:opacity-55"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="pt-3 mt-4 border-t border-slate-100 flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => handleTestNotification("whatsapp")}
+                  disabled={!notificationSettings.whatsappEnabled || testingChannel !== null}
+                  className="text-[11px] font-bold text-emerald-600 hover:text-emerald-755 disabled:opacity-40 flex items-center gap-1 cursor-pointer"
+                >
+                  <Send className="w-3 h-3" /> Kirim Tes WhatsApp
+                </button>
+              </div>
+            </div>
+
+            {/* Email Channel */}
+            <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs flex flex-col justify-between">
+              <div className="space-y-3">
+                <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+                  <span className="font-bold text-xs text-slate-800 flex items-center gap-1.5">
+                    <Mail className="w-4 h-4 text-indigo-500" /> Ringkasan Laporan Email
+                  </span>
+                  <label className="relative inline-flex items-center cursor-pointer select-none">
+                    <input 
+                      type="checkbox" 
+                      className="sr-only peer"
+                      checked={notificationSettings.emailEnabled}
+                      onChange={(e) => setNotificationSettings(prev => ({ ...prev, emailEnabled: e.target.checked }))}
+                    />
+                    <div className="w-8 h-4.5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-3.5 after:w-3.5 after:transition-all peer-checked:bg-indigo-500"></div>
+                    <span className="text-[10px] font-semibold text-slate-500 ml-1.5">
+                      {notificationSettings.emailEnabled ? "Aktif" : "Nonaktif"}
+                    </span>
+                  </label>
+                </div>
+
+                <div className="space-y-2 text-xs">
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase tracking-wider font-semibold text-slate-400 block font-medium">Email Penerima (Admin)</label>
+                    <input 
+                      type="email"
+                      disabled={!notificationSettings.emailEnabled}
+                      value={notificationSettings.emailRecipient}
+                      onChange={(e) => setNotificationSettings(prev => ({ ...prev, emailRecipient: e.target.value.trim() }))}
+                      placeholder="admin@rsudjusufsk.go.id"
+                      className="w-full bg-slate-50/50 border border-slate-200 rounded-lg px-2.5 py-1.5 outline-none focus:bg-white focus:ring-1 focus:ring-indigo-500 disabled:opacity-55"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="space-y-1">
+                      <label className="text-[10px] uppercase tracking-wider font-semibold text-slate-400 block font-medium">Host SMTP</label>
+                      <input 
+                        type="text"
+                        disabled={!notificationSettings.emailEnabled}
+                        value={notificationSettings.smtpHost}
+                        onChange={(e) => setNotificationSettings(prev => ({ ...prev, smtpHost: e.target.value.trim() }))}
+                        placeholder="smtp.gmail.com"
+                        className="w-full bg-slate-50/50 border border-slate-200 rounded-lg px-2 py-1.5 font-mono text-[11px] outline-none focus:bg-white focus:ring-1 focus:ring-indigo-500 disabled:opacity-55"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] uppercase tracking-wider font-semibold text-slate-400 block font-medium">Port SMTP</label>
+                      <input 
+                        type="number"
+                        disabled={!notificationSettings.emailEnabled}
+                        value={notificationSettings.smtpPort}
+                        onChange={(e) => setNotificationSettings(prev => ({ ...prev, smtpPort: parseInt(e.target.value) || 465 }))}
+                        placeholder="465"
+                        className="w-full bg-slate-50/50 border border-slate-200 rounded-lg px-2 py-1.5 font-mono text-[11px] outline-none focus:bg-white focus:ring-1 focus:ring-indigo-500 disabled:opacity-55"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-1">
+                    <div className="space-y-1">
+                      <label className="text-[10px] uppercase tracking-wider font-semibold text-slate-400 block font-medium">Username / Pengirim</label>
+                      <input 
+                        type="text"
+                        disabled={!notificationSettings.emailEnabled}
+                        value={notificationSettings.smtpUser}
+                        onChange={(e) => setNotificationSettings(prev => ({ ...prev, smtpUser: e.target.value.trim() }))}
+                        placeholder="admin.diklit@gmail.com"
+                        className="w-full bg-slate-50/50 border border-slate-200 rounded-lg px-2.5 py-1.5 font-mono text-[11px] outline-none focus:bg-white focus:ring-1 focus:ring-indigo-500 disabled:opacity-55"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] uppercase tracking-wider font-semibold text-slate-400 block font-medium">Sandi SMTP (App Password)</label>
+                      <input 
+                        type="password"
+                        disabled={!notificationSettings.emailEnabled}
+                        value={notificationSettings.smtpPass}
+                        onChange={(e) => setNotificationSettings(prev => ({ ...prev, smtpPass: e.target.value }))}
+                        placeholder="••••••••••••••••"
+                        className="w-full bg-slate-50/50 border border-slate-200 rounded-lg px-2.5 py-1.5 font-mono text-[11px] outline-none focus:bg-white focus:ring-1 focus:ring-indigo-500 disabled:opacity-55"
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="pt-3 mt-4 border-t border-slate-100 flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => handleTestNotification("email")}
+                  disabled={!notificationSettings.emailEnabled || testingChannel !== null}
+                  className="text-[11px] font-bold text-indigo-600 hover:text-indigo-755 disabled:opacity-40 flex items-center gap-1 cursor-pointer"
+                >
+                  <Send className="w-3 h-3" /> Kirim Tes Email
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex justify-end pt-2">
+            <button
+              type="button"
+              onClick={handleSaveNotificationSettings}
+              disabled={isSavingNotifications}
+              className="bg-emerald-600 hover:bg-emerald-700 hover:shadow-lg disabled:bg-slate-300 text-white font-bold py-2.5 px-6 rounded-xl text-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+            >
+              {isSavingNotifications ? (
+                <>
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Sedang menyimpan...
+                </>
+              ) : (
+                <>
+                  <CheckCircle2 className="w-3.5 h-3.5" /> Simpan Integrasi Notifikasi
+                </>
+              )}
+            </button>
+          </div>
+        </motion.div>
+      )}
+
       {/* Numerical Stats Widgets */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {/* Total stats */}
@@ -976,24 +1543,93 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {/* Trend Time Plot */}
           <div className="bg-white rounded-xl border border-slate-150/60 shadow-sm p-5">
-            <h3 className="text-sm font-semibold text-slate-800 mb-4 flex items-center gap-1.5">
-              <CalendarCheck2 className="w-4 h-4 text-emerald-600" /> Tren Kedatangan Peserta (Waktu Input)
-            </h3>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
+              <h3 className="text-sm font-semibold text-slate-800 flex items-center gap-1.5">
+                <CalendarCheck2 className="w-4 h-4 text-emerald-600" /> Analisis Waktu & Tren Hadir Real-Time
+              </h3>
+              
+              <div className="flex bg-slate-100 p-0.5 rounded-lg border border-slate-200/80 text-[10.5px] font-semibold self-start sm:self-auto shadow-xs">
+                <button
+                  type="button"
+                  onClick={() => setTrendViewType("cumulative")}
+                  className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${
+                    trendViewType === "cumulative" 
+                      ? "bg-white text-emerald-700 shadow-xs" 
+                      : "text-slate-500 hover:text-slate-850"
+                  }`}
+                >
+                  Realtime (Kumulatif)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTrendViewType("hour")}
+                  className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${
+                    trendViewType === "hour" 
+                      ? "bg-white text-emerald-750 shadow-xs" 
+                      : "text-slate-500 hover:text-slate-850"
+                  }`}
+                >
+                  Per Jam
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTrendViewType("minute")}
+                  className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${
+                    trendViewType === "minute" 
+                      ? "bg-white text-emerald-750 shadow-xs" 
+                      : "text-slate-500 hover:text-slate-850"
+                  }`}
+                >
+                  Menit ke Menit
+                </button>
+              </div>
+            </div>
+
             <div className="h-64 w-full text-xs">
               <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={stats.timeline} margin={{ top: 10, right: 10, left: -25, bottom: 0 }}>
-                  <defs>
-                    <linearGradient id="colorArrival" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#10b981" stopOpacity={0.3}/>
-                      <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                  <XAxis dataKey="time" stroke="#94a3b8" />
-                  <YAxis stroke="#94a3b8" allowDecimals={false} />
-                  <Tooltip contentStyle={{ fontSize: "11px", borderRadius: "8px", border: "1px solid #e2e8f0" }} />
-                  <Area type="monotone" dataKey="count" name="Jumlah Peserta" stroke="#10b981" strokeWidth={2} fillOpacity={1} fill="url(#colorArrival)" />
-                </AreaChart>
+                {trendViewType === "cumulative" ? (
+                  <AreaChart data={stats.cumulative || []} margin={{ top: 10, right: 10, left: -25, bottom: 0 }}>
+                    <defs>
+                      <linearGradient id="colorCumulative" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#10b981" stopOpacity={0.3}/>
+                        <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                    <XAxis dataKey="time" stroke="#94a3b8" />
+                    <YAxis stroke="#94a3b8" allowDecimals={false} />
+                    <Tooltip 
+                      contentStyle={{ fontSize: "11px", borderRadius: "8px", border: "1px solid #e2e8f0" }}
+                      formatter={(value) => [`${value} Orang`, "Total Terakumulasi"]}
+                    />
+                    <Area type="monotone" dataKey="total" name="Total Hadir" stroke="#10b981" strokeWidth={2.5} fillOpacity={1} fill="url(#colorCumulative)" />
+                  </AreaChart>
+                ) : trendViewType === "hour" ? (
+                  <BarChart data={stats.hourly || []} margin={{ top: 10, right: 10, left: -25, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                    <XAxis dataKey="hour" stroke="#94a3b8" />
+                    <YAxis stroke="#94a3b8" allowDecimals={false} />
+                    <Tooltip 
+                      contentStyle={{ fontSize: "11px", borderRadius: "8px", border: "1px solid #e2e8f0" }}
+                      formatter={(value) => [`${value} Orang`, "Jumlah Check-in"]}
+                    />
+                    <Bar dataKey="count" name="Jumlah Peserta" fill="#059669" radius={[4, 4, 0, 0]} barSize={35} />
+                  </BarChart>
+                ) : (
+                  <AreaChart data={stats.timeline} margin={{ top: 10, right: 10, left: -25, bottom: 0 }}>
+                    <defs>
+                      <linearGradient id="colorArrival" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#10b981" stopOpacity={0.3}/>
+                        <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                    <XAxis dataKey="time" stroke="#94a3b8" />
+                    <YAxis stroke="#94a3b8" allowDecimals={false} />
+                    <Tooltip contentStyle={{ fontSize: "11px", borderRadius: "8px", border: "1px solid #e2e8f0" }} />
+                    <Area type="monotone" dataKey="count" name="Jumlah Peserta" stroke="#10b981" strokeWidth={2} fillOpacity={1} fill="url(#colorArrival)" />
+                  </AreaChart>
+                )}
               </ResponsiveContainer>
             </div>
           </div>
@@ -1028,19 +1664,29 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
             </span>
           </div>
 
-          <div className="flex flex-wrap gap-2 w-full md:w-auto">
+          <div className="flex flex-wrap gap-2 w-full md:w-auto items-center">
             {/* Search Input */}
-            <div className="relative w-full md:w-64">
-              <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
-                <Search className="w-3.5 h-3.5" />
+            <div className="relative w-full md:w-72">
+              <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
+                <Search className="w-4 h-4 text-slate-400" />
               </div>
               <input
                 type="text"
                 placeholder="Cari nama, instansi, NIP, atau jabatan..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-8 pr-3 py-1.5 border border-slate-200 rounded-lg text-xs focus:ring-1 focus:ring-slate-400 focus:outline-none"
+                className="w-full pl-10 pr-8 py-2 border border-slate-200 bg-slate-50/50 hover:bg-white focus:bg-white rounded-xl text-xs focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 focus:outline-none transition-all duration-200 font-medium text-slate-700 placeholder-slate-400 shadow-sm"
               />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery("")}
+                  className="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-400 hover:text-slate-600 transition-colors cursor-pointer"
+                  title="Hapus Pencarian"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              )}
             </div>
 
             {/* Export buttons */}
@@ -1052,13 +1698,13 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
               <Download className="w-3.5 h-3.5" /> Excel
             </button>
             <button
-              onClick={exportToPdf}
+              onClick={() => setShowPdfOptions(true)}
               disabled={isExportingPdf}
-              className={`bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200 px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1 ${isExportingPdf ? "opacity-75 cursor-wait" : "cursor-pointer"}`}
-              title="Download format PDF cetak"
+              className={`bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200 px-3.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition ${isExportingPdf ? "opacity-75 cursor-wait" : "cursor-pointer"}`}
+              title="Unduh Laporan PDF Cetak"
             >
-              <Download className={`w-3.5 h-3.5 ${isExportingPdf ? "animate-spin" : ""}`} />
-              {isExportingPdf ? pdfProgressText : "PDF"}
+              <FileDown className={`w-3.5 h-3.5 ${isExportingPdf ? "animate-spin" : ""}`} />
+              {isExportingPdf ? pdfProgressText : "Unduh Laporan PDF"}
             </button>
 
             {/* Clean data button */}
@@ -1440,52 +2086,200 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
         </div>
       )}
 
-      {/* Toast notifications container */}
-      <div className="fixed bottom-5 right-5 z-50 flex flex-col gap-2.5 max-w-sm w-full pointer-events-none">
-        <AnimatePresence>
-          {toasts.map((toast) => (
-            <motion.div
-              key={toast.id}
-              initial={{ opacity: 0, y: 30, scale: 0.95 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: -20, scale: 0.95, transition: { duration: 0.15 } }}
-              layout
-              className="pointer-events-auto w-full bg-slate-900 border border-slate-800 text-white rounded-xl shadow-xl px-4 py-3.5 flex items-center justify-between gap-3 text-xs overflow-hidden relative"
-            >
-              <div className="flex items-center gap-2.5">
-                {toast.type === "loading" && (
-                  <Loader2 className="w-4 h-4 text-emerald-400 animate-spin flex-shrink-0" />
-                )}
-                {toast.type === "success" && (
-                  <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />
-                )}
-                {toast.type === "info" && (
-                  <Info className="w-4 h-4 text-blue-400 flex-shrink-0" />
-                )}
-                {toast.type === "warning" && (
-                  <ShieldAlert className="w-4 h-4 text-amber-500 flex-shrink-0" />
-                )}
-                {toast.type === "error" && (
-                  <ShieldAlert className="w-4 h-4 text-rose-500 flex-shrink-0" />
-                )}
-                <span className="font-medium text-[11.5px]">{toast.message}</span>
-              </div>
-              
-              {toast.type !== "loading" && (
-                <button
-                  onClick={() => dismissToast(toast.id)}
-                  className="text-slate-400 hover:text-white p-0.5 rounded-lg hover:bg-slate-800/60 cursor-pointer transition flex-shrink-0"
-                >
-                  <X className="w-3.5 h-3.5" />
-                </button>
-              )}
+      {/* PDF Options Scope Chooser Modal */}
+      {showPdfOptions && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 flex items-center justify-center p-4 backdrop-blur-xs">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-100 flex flex-col">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-4">
+              <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                <FileDown className="w-5 h-5 text-indigo-600" />
+                Pilihan Unduh Laporan PDF
+              </h3>
+              <button 
+                onClick={() => setShowPdfOptions(false)}
+                className="text-slate-400 hover:text-slate-600 p-1 rounded-lg transition"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            
+            <p className="text-xs text-slate-500 leading-relaxed mb-5">
+              Silakan tentukan cakupan baris data kehadiran yang ingin Anda ekspor ke dalam dokumen PDF resmi RSUD Dr. H. Jusuf SK.
+            </p>
 
-              {/* Progress bar accent line */}
-              {toast.type === "loading" && (
-                <div className="absolute bottom-0 left-0 h-0.5 bg-emerald-500 w-full animate-pulse" />
-              )}
-            </motion.div>
-          ))}
+            <div className="flex flex-col gap-3 mb-6">
+              {/* Option 1: Filtered results */}
+              <button
+                type="button"
+                onClick={() => {
+                  setShowPdfOptions(false);
+                  exportToPdf(true);
+                }}
+                disabled={filteredAttendees.length === 0}
+                className={`text-left p-4 rounded-xl border transition flex items-start gap-3.5 hover:scale-[1.01] ${
+                  searchQuery 
+                    ? "border-emerald-205 bg-emerald-50/40 hover:bg-emerald-50/80 hover:border-emerald-300 cursor-pointer" 
+                    : "border-slate-100 bg-slate-50/50 hover:bg-slate-50 hover:border-slate-200 cursor-pointer text-slate-600"
+                }`}
+              >
+                <div className={`p-2 rounded-lg ${searchQuery ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-500"} flex-shrink-0 mt-0.5`}>
+                  <Search className="w-4 h-4" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="font-bold text-xs text-slate-900">Sesuai Filter Pencarian</span>
+                    <span className={`px-1.5 py-0.5 rounded-full text-[9px] font-bold ${searchQuery ? "bg-emerald-100 text-emerald-800" : "bg-slate-200 text-slate-700"}`}>
+                      {filteredAttendees.length} Peserta
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-500 mt-0.5 leading-relaxed">
+                    Hanya mengunduh data peserta yang aktif dicari / terfilter saat ini.
+                  </p>
+                </div>
+              </button>
+
+              {/* Option 2: All results */}
+              <button
+                type="button"
+                onClick={() => {
+                  setShowPdfOptions(false);
+                  exportToPdf(false);
+                }}
+                disabled={attendees.length === 0}
+                className="text-left p-4 rounded-xl border border-indigo-100 bg-indigo-50/30 hover:bg-indigo-50/70 hover:border-indigo-200 transition flex items-start gap-3.5 cursor-pointer hover:scale-[1.01]"
+              >
+                <div className="p-2 rounded-lg bg-indigo-100 text-indigo-700 flex-shrink-0 mt-0.5">
+                  <Users className="w-4 h-4" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="font-bold text-xs text-slate-900">Semua Data Daftar Hadir</span>
+                    <span className="px-1.5 py-0.5 bg-indigo-100 text-indigo-800 rounded-full text-[9px] font-bold">
+                      {attendees.length} Peserta
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-500 mt-0.5 leading-relaxed">
+                    Mengunduh seluruh baris data daftar hadir tanpa memedulikan filter pencarian.
+                  </p>
+                </div>
+              </button>
+            </div>
+
+            <div className="flex justify-end gap-2 border-t border-slate-100 pt-4">
+              <button
+                type="button"
+                onClick={() => setShowPdfOptions(false)}
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold cursor-pointer transition"
+              >
+                Tutup
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Session Toggle Confirmation Modal */}
+      {showConfirmToggleSession && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 flex items-center justify-center p-4 backdrop-blur-xs">
+          <div className="bg-white rounded-2xl max-w-sm w-full p-6 shadow-2xl border border-slate-100 font-sans">
+            <h3 className="text-sm font-bold text-slate-900 mb-2 flex items-center gap-2">
+              <ShieldAlert className="w-5 h-5 text-indigo-600" />
+              Ubah Status Sesi Absensi
+            </h3>
+            <p className="text-xs text-slate-500 leading-relaxed mb-5">
+              Apakah Anda yakin ingin <strong>{isSessionActive ? "MENUTUP" : "MEMBUKA"}</strong> sesi absensi kehadiran digital?<br /><br />
+              {isSessionActive 
+                ? "Menutup sesi akan menghentikan pengisian absensi baru dari perangkat HP/Smartphone peserta secara langsung." 
+                : "Membuka sesi akan mengizinkan pengisian absensi dari perangkat HP/Smartphone peserta secara seketika berdasarkan koordinat lokasi dan QR Code."
+              }
+            </p>
+
+            <div className="flex gap-2.5 justify-end">
+              <button
+                type="button"
+                onClick={() => setShowConfirmToggleSession(false)}
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-medium cursor-pointer transition select-none"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowConfirmToggleSession(false);
+                  handleToggleSession();
+                }}
+                className={`px-4 py-2 text-white rounded-xl text-xs font-bold cursor-pointer transition select-none ${
+                  isSessionActive ? "bg-amber-600 hover:bg-amber-700 shadow-sm shadow-amber-500/20" : "bg-emerald-600 hover:bg-emerald-700 shadow-sm shadow-emerald-500/20"
+                }`}
+              >
+                {isSessionActive ? "Ya, Tutup Sesi" : "Ya, Buka Sesi"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Toast notifications container */}
+      <div className="fixed bottom-5 right-5 z-55 flex flex-col gap-3 max-w-sm w-full pointer-events-none">
+        <AnimatePresence>
+          {toasts.map((toast) => {
+            let typeClasses = "bg-slate-900 border-slate-800 text-slate-100";
+            if (toast.type === "success") {
+              typeClasses = "bg-slate-900 border-l-4 border-l-emerald-500 border-y-slate-800 border-r-slate-800 text-emerald-50 shadow-lg shadow-emerald-950/20";
+            } else if (toast.type === "error") {
+              typeClasses = "bg-slate-900 border-l-4 border-l-rose-500 border-y-slate-800 border-r-slate-800 text-rose-50 shadow-lg shadow-rose-950/20";
+            } else if (toast.type === "warning") {
+              typeClasses = "bg-slate-900 border-l-4 border-l-amber-500 border-y-slate-800 border-r-slate-800 text-amber-50 shadow-lg shadow-amber-950/20";
+            } else if (toast.type === "loading") {
+              typeClasses = "bg-slate-900 border-l-4 border-l-sky-500 border-y-slate-800 border-r-slate-800 text-sky-50 shadow-lg shadow-sky-950/10";
+            } else if (toast.type === "info") {
+              typeClasses = "bg-slate-900 border-l-4 border-l-blue-500 border-y-slate-800 border-r-slate-800 text-slate-100 shadow-lg shadow-blue-950/10";
+            }
+
+            return (
+              <motion.div
+                key={toast.id}
+                initial={{ opacity: 0, y: 30, scale: 0.95 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: -20, scale: 0.95, transition: { duration: 0.15 } }}
+                layout
+                className={`pointer-events-auto w-full border rounded-xl shadow-xl px-4 py-3.5 flex items-center justify-between gap-3 text-xs overflow-hidden relative ${typeClasses}`}
+              >
+                <div className="flex items-center gap-2.5">
+                  {toast.type === "loading" && (
+                    <Loader2 className="w-4 h-4 text-sky-400 animate-spin flex-shrink-0" />
+                  )}
+                  {toast.type === "success" && (
+                    <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+                  )}
+                  {toast.type === "info" && (
+                    <Info className="w-4 h-4 text-blue-400 flex-shrink-0" />
+                  )}
+                  {toast.type === "warning" && (
+                    <ShieldAlert className="w-4 h-4 text-amber-500 flex-shrink-0" />
+                  )}
+                  {toast.type === "error" && (
+                    <ShieldAlert className="w-4 h-4 text-rose-500 flex-shrink-0" />
+                  )}
+                  <span className="font-semibold text-[11.5px] leading-relaxed">{toast.message}</span>
+                </div>
+                
+                {toast.type !== "loading" && (
+                  <button
+                    onClick={() => dismissToast(toast.id)}
+                    className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-850/60 cursor-pointer transition flex-shrink-0"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+
+                {/* Progress bar accent line */}
+                {toast.type === "loading" && (
+                  <div className="absolute bottom-0 left-0 h-0.5 bg-sky-500 w-full animate-pulse" />
+                )}
+              </motion.div>
+            );
+          })}
         </AnimatePresence>
       </div>
     </div>

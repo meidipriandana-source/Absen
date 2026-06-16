@@ -3,6 +3,7 @@ import { Trash2, Edit3, Palette, Eraser, PenTool } from "lucide-react";
 
 interface SignaturePadProps {
   onChange: (base64: string | null) => void;
+  initialValue?: string | null;
 }
 
 const INSIGHT_COLORS = [
@@ -11,11 +12,11 @@ const INSIGHT_COLORS = [
   { name: "Teal", hex: "#0d9488", bgClass: "bg-teal-600" },
 ];
 
-export default function SignaturePad({ onChange }: SignaturePadProps) {
+export default function SignaturePad({ onChange, initialValue }: SignaturePadProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [isDrawing, setIsDrawing] = useState(false);
-  const [isEmpty, setIsEmpty] = useState(true);
+  const [isEmpty, setIsEmpty] = useState(!initialValue);
   const [selectedColor, setSelectedColor] = useState("#0f172a");
 
   // Resize canvas to fit container properly
@@ -52,6 +53,12 @@ export default function SignaturePad({ onChange }: SignaturePadProps) {
           ctx.drawImage(img, 0, 0, rect.width, 190);
         };
         img.src = tempImage;
+      } else if (initialValue) {
+        const img = new Image();
+        img.onload = () => {
+          ctx.drawImage(img, 0, 0, rect.width, 190);
+        };
+        img.src = initialValue;
       }
     }
   };
