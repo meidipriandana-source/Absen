@@ -495,19 +495,29 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
       if (isSessionActive) {
         // Disable
         let cleared = false;
+        let isLocalBypass = false;
         try {
           const res = await fetch("/api/clear-token", { method: "POST" });
-          if (res.ok) cleared = true;
+          if (res.ok) {
+            cleared = true;
+          } else {
+            console.warn("Server API returned error status for clear-token, falling back to local deactivation.");
+            cleared = true;
+            isLocalBypass = true;
+          }
         } catch (fetchErr) {
           console.warn("Server offline, performing offline deactivation.");
           cleared = true;
+          isLocalBypass = true;
         }
 
         if (cleared) {
           setIsSessionActive(false);
           localStorage.setItem("is_public_session_active", "false");
           updateToast(toastId, { 
-            message: "Sesi absensi HP berhasil ditutup!", 
+            message: isLocalBypass 
+              ? "Sesi absensi HP ditutup (Metode Cadangan Cadangan Lokal)."
+              : "Sesi absensi HP berhasil ditutup!", 
             type: "success" 
           });
         } else {
@@ -516,6 +526,7 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
       } else {
         // Enable by uploading access token along with dynamic sheet pointers
         let saved = false;
+        let isLocalBypass = false;
         try {
           const res = await fetch("/api/save-token", {
             method: "POST",
@@ -527,18 +538,27 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
               isSessionActive: true
             }),
           });
-          if (res.ok) saved = true;
+          if (res.ok) {
+            saved = true;
+          } else {
+            console.warn("Server API returned error status for save-token, falling back to local active mode.");
+            saved = true;
+            isLocalBypass = true;
+          }
         } catch (fetchErr) {
           console.warn("Server offline, performing offline activation.");
           saved = true;
+          isLocalBypass = true;
         }
 
         if (saved) {
           setIsSessionActive(true);
           localStorage.setItem("is_public_session_active", "true");
           updateToast(toastId, { 
-            message: "Sesi absensi HP berhasil dibuka secara instan!", 
-            type: "success" 
+            message: isLocalBypass
+              ? "Sesi absensi HP berhasil dibuka (Metode Cadangan Lokal - Offline/Statik)!"
+              : "Sesi absensi HP berhasil dibuka secara instan!", 
+            type: isLocalBypass ? "warning" : "success" 
           });
         } else {
           throw new Error("Respon server tidak valid saat mengaktifkan sesi.");
