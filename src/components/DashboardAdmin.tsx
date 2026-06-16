@@ -3,11 +3,13 @@ import {
   Users, School, CalendarCheck2, ShieldCheck, RefreshCw, Download, FileDown,
   Search, ShieldAlert, ChevronRight, LogOut, CheckCircle2, QrCode, 
   Settings, ExternalLink, Trash2, Key, Info, HelpCircle, Loader2, X, Pencil,
-  Bell, Mail, Send, MessageSquare, Calendar, Filter
+  Bell, Mail, Send, MessageSquare, Calendar, Filter, Printer, Activity,
+  Clock, Award, User, TrendingUp
 } from "lucide-react";
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, 
-  ResponsiveContainer, AreaChart, Area, PieChart, Pie, Cell
+  ResponsiveContainer, AreaChart, Area, PieChart, Pie, Cell,
+  LineChart, Line
 } from "recharts";
 import * as XLSX from "xlsx";
 import { jsPDF } from "jspdf";
@@ -129,6 +131,95 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
 
   const [deletingAttendee, setDeletingAttendee] = useState<Attendee | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [selectedProfileAttendee, setSelectedProfileAttendee] = useState<Attendee | null>(null);
+
+  // Real-Time System Status & Tracking States
+  const [adminClientId] = useState(() => {
+    let id = localStorage.getItem("admin_client_id");
+    if (!id) {
+      id = "admin-" + Math.random().toString(36).substring(2, 11);
+      localStorage.setItem("admin_client_id", id);
+    }
+    return id;
+  });
+  const [activeAdminCount, setActiveAdminCount] = useState<number>(1);
+  const [googleSpreadsheetStatus, setGoogleSpreadsheetStatus] = useState<"connected" | "unconfigured" | "error">("unconfigured");
+  const [googleSpreadsheetError, setGoogleSpreadsheetError] = useState<string | null>(null);
+
+  // Google Drive Backup State Management
+  const [backupInfo, setBackupInfo] = useState<{
+    lastBackupDate: string | null;
+    lastBackupTime: number | null;
+    history: {
+      timestamp: number;
+      date: string;
+      success: boolean;
+      fileName: string;
+      fileId: string | null;
+      error: string | null;
+      recordCount: number;
+    }[];
+  } | null>(null);
+  const [isBackupRunning, setIsBackupRunning] = useState(false);
+
+  const fetchBackupStatus = async () => {
+    try {
+      const res = await fetch("/api/backup/status");
+      if (res.ok) {
+        const data = await res.json();
+        setBackupInfo(data);
+      }
+    } catch (err) {
+      console.warn("Gagal mengambil status cadangan Google Drive:", err);
+    }
+  };
+
+  const handleRunBackup = async () => {
+    setIsBackupRunning(true);
+    const toastId = showToast("Mencadangkan data ke Google Drive...", "loading", 0);
+    try {
+      const res = await fetch("/api/backup/run", { method: "POST" });
+      const data = await res.json();
+      if (res.ok) {
+        showToast(data.message || "Daftar hadir berhasil dicadangkan ke Google Drive!", "success", 4500);
+        fetchBackupStatus();
+      } else {
+        const errorMsg = data.error || "Gagal mencadangkan data.";
+        showToast(errorMsg, "error", 6000);
+        fetchBackupStatus(); // update logs
+      }
+    } catch (err: any) {
+      showToast(`Kesalahan: ${err.message || "Saluran koneksi bermasalah"}`, "error", 5000);
+    } finally {
+      setIsBackupRunning(false);
+      dismissToast(toastId);
+    }
+  };
+
+  const [recentAttendeeKeys, setRecentAttendeeKeys] = useState<Record<string, number>>({});
+
+  // Auto clean up keys of recently checked-in attendees to stop highlighting after 15 seconds
+  useEffect(() => {
+    const keys = Object.keys(recentAttendeeKeys);
+    if (keys.length === 0) return;
+
+    const timer = setTimeout(() => {
+      const now = Date.now();
+      const updated = { ...recentAttendeeKeys };
+      let hasChanges = false;
+      for (const key of Object.keys(updated)) {
+        if (now - updated[key] > 15000) { // Keep highlight for 15 seconds
+          delete updated[key];
+          hasChanges = true;
+        }
+      }
+      if (hasChanges) {
+        setRecentAttendeeKeys(updated);
+      }
+    }, 1000);
+
+    return () => clearTimeout(timer);
+  }, [recentAttendeeKeys]);
 
   const publicUrl = window.location.origin;
 
@@ -211,7 +302,7 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
   // 1. Fetch active session state from backend
   const fetchSessionStatus = async () => {
     try {
-      const res = await fetch("/api/session-status");
+      const res = await fetch(`/api/session-status?adminClientId=${adminClientId}`);
       const contentType = res.headers.get("content-type") || "";
       if (!contentType.includes("application/json")) {
         const text = await res.text();
@@ -224,6 +315,16 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
       const data = await res.json();
       setIsSessionActive(data.active);
       localStorage.setItem("is_public_session_active", String(data.active));
+      
+      // Update real-time system tracking metrics
+      if (typeof data.activeAdminCount === "number") {
+        setActiveAdminCount(data.activeAdminCount);
+      }
+      if (data.googleSpreadsheetStatus) {
+        setGoogleSpreadsheetStatus(data.googleSpreadsheetStatus);
+      }
+      setGoogleSpreadsheetError(data.googleSpreadsheetError || null);
+
       if (data.spreadsheetId) {
         setSpreadsheetId(data.spreadsheetId);
         localStorage.setItem("custom_spreadsheet_id", data.spreadsheetId);
@@ -334,6 +435,19 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
       });
 
       if (brandNewAttendees.length > 0) {
+        // Track the keys & timestamps of newly arrived checked-in attendees for high-contrast highlight effect
+        setRecentAttendeeKeys(prev => {
+          const updated = { ...prev };
+          const now = Date.now();
+          brandNewAttendees.forEach(na => {
+            const key = `${(na.nip || "").trim().toLowerCase()}_${(na.name || "").trim().toLowerCase()}`;
+            if (key) {
+              updated[key] = now;
+            }
+          });
+          return updated;
+        });
+
         if (brandNewAttendees.length <= 3) {
           // Individual detailed toast alert
           brandNewAttendees.forEach(na => {
@@ -612,11 +726,19 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
     try {
       setIsLoading(true);
       
-      // Wipe backend local database
-      const localClearRes = await fetch("/api/clear-all", { method: "POST" });
-      if (!localClearRes.ok) {
-        throw new Error("Gagal mengosongkan database lokal.");
+      // Wipe backend local database (best-effort)
+      try {
+        const localClearRes = await fetch("/api/clear-all", { method: "POST" });
+        if (!localClearRes.ok) {
+          console.warn("Backend local database clear failed/returned non-ok.");
+        }
+      } catch (backendErr) {
+        console.warn("Express backend database clear request failed:", backendErr);
       }
+
+      // Wipe local browser offline cache and state
+      localStorage.setItem("local_offline_attendees", "[]");
+      localStorage.removeItem("local_offline_attendees");
 
       // Best effort wipe Google Sheets if authorized
       if (accessToken && accessToken !== "bypass") {
@@ -659,6 +781,7 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
   // Polling hook
   useEffect(() => {
     fetchSessionStatus();
+    fetchBackupStatus();
     fetchNotificationSettings();
     fetchAttendeesFromSheets(false);
   }, [accessToken]);
@@ -1190,12 +1313,55 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
       };
     });
 
+    // Grouping by day-by-day for daily participation trend
+    const dailyCounts: Record<string, number> = {};
+    attendees.forEach((a) => {
+      try {
+        const datePart = a.checkInTime.split(" ")[0]; // "YYYY-MM-DD"
+        if (datePart) {
+          dailyCounts[datePart] = (dailyCounts[datePart] || 0) + 1;
+        } else {
+          dailyCounts["Lainnya"] = (dailyCounts["Lainnya"] || 0) + 1;
+        }
+      } catch (err) {
+        dailyCounts["Lainnya"] = (dailyCounts["Lainnya"] || 0) + 1;
+      }
+    });
+
+    const dailyParticipation = Object.entries(dailyCounts)
+      .map(([date, count]) => {
+        let displayDate = date;
+        try {
+          if (date !== "Lainnya") {
+            const parts = date.split("-");
+            if (parts.length === 3) {
+              const [y, m, d] = parts;
+              const months = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agt", "Sep", "Okt", "Nov", "Des"];
+              const mIdx = parseInt(m, 10) - 1;
+              displayDate = `${parseInt(d, 10)} ${months[mIdx] || m}`;
+            } else {
+              // Try local date format standard
+              const localParts = date.split("/");
+              if (localParts.length === 3) {
+                const [d, m, y] = localParts;
+                const months = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agt", "Sep", "Okt", "Nov", "Des"];
+                const mIdx = parseInt(m, 10) - 1;
+                displayDate = `${parseInt(d, 10)} ${months[mIdx] || m}`;
+              }
+            }
+          }
+        } catch (_) {}
+        return { date, label: displayDate, count };
+      })
+      .sort((a, b) => a.date.localeCompare(b.date));
+
     return {
       totalCount: attendees.length,
       byInstitution,
       timeline,
       hourly,
       cumulative,
+      dailyParticipation,
     };
   };
 
@@ -1243,6 +1409,47 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
               Sinkronisasi Terakhir: {lastSynced} (setiap 10s otomatis)
             </p>
           )}
+
+          {/* Real-time Status Panel */}
+          <div className="flex flex-wrap items-center gap-2.5 mt-3 pt-3 border-t border-slate-800/80">
+            <div className="flex items-center gap-1.5 bg-slate-800/60 border border-slate-700/60 h-7 px-2.5 rounded-lg text-[10px] font-semibold text-slate-300">
+              <Users className="w-3.5 h-3.5 text-sky-400" />
+              <span>Admin Aktif:</span>
+              <span className="text-white font-extrabold bg-sky-500/20 px-1.5 py-0.5 rounded-md min-w-[16px] text-center" title="Jumlah admin yang sedang memantau halaman">{activeAdminCount} Sesi</span>
+            </div>
+
+            <div 
+              className={`flex items-center gap-1.5 bg-slate-800/60 border h-7 px-2.5 rounded-lg text-[10px] font-semibold transition-all relative group cursor-help ${
+                googleSpreadsheetStatus === "connected"
+                  ? "border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/5"
+                  : googleSpreadsheetStatus === "error"
+                  ? "border-rose-500/20 text-rose-400 hover:bg-rose-500/5"
+                  : "border-amber-500/20 text-amber-400 hover:bg-amber-500/5"
+              }`}
+              title={googleSpreadsheetError || "Status Google Sheets API"}
+            >
+              <div className={`w-1.5 h-1.5 rounded-full ${
+                googleSpreadsheetStatus === "connected"
+                  ? "bg-emerald-400 animate-pulse"
+                  : googleSpreadsheetStatus === "error"
+                  ? "bg-rose-400"
+                  : "bg-amber-400"
+              }`} />
+              <Activity className="w-3 h-3" />
+              <span>Koneksi API Sheets:</span>
+              <span className="uppercase font-extrabold">
+                {googleSpreadsheetStatus === "connected" ? "Terhubung" : googleSpreadsheetStatus === "error" ? "Bermasalah" : "Belum Set"}
+              </span>
+
+              {/* Advanced Tooltip for specific error logs on hover */}
+              {googleSpreadsheetStatus === "error" && googleSpreadsheetError && (
+                <div className="absolute top-full left-0 z-50 mt-1.5 hidden group-hover:block transition-all duration-200 w-64 bg-slate-950 text-slate-300 border border-slate-800 text-[9px] p-2.5 rounded-lg shadow-2xl leading-normal font-sans text-left normal-case">
+                  <span className="font-bold text-rose-400 block mb-1">Detail Kesalahan Koneksi:</span>
+                  {googleSpreadsheetError}
+                </div>
+              )}
+            </div>
+          </div>
         </div>
 
         <div className="flex flex-wrap gap-2.5 w-full lg:w-auto items-center">
@@ -1510,6 +1717,124 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
                 </>
               )}
             </button>
+          </div>
+
+          {/* Cadangan Google Drive Cadangan Otomatis Section */}
+          <div className="border-t border-slate-200/80 pt-5 space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div>
+                <h4 className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                  <ShieldCheck className="w-4 h-4 text-emerald-600" /> Sinkronisasi & Pencadangan Google Drive Harian Otomatis
+                </h4>
+                <p className="text-[10px] text-slate-500 leading-normal mt-0.5">
+                  Sistem mengekspor dan mencadangkan duplikat data absensi berformat Excel (.xlsx) setiap hari secara otomatis ke aman Drive Anda.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-1.5 shrink-0 bg-emerald-50 text-emerald-700 text-[10px] font-bold px-2 py-0.5 rounded-md border border-emerald-150 w-fit">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                SINKRONISASI AKTIF
+              </div>
+            </div>
+
+            <div className="bg-slate-50/50 p-4 rounded-xl border border-slate-150 grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="space-y-1">
+                <span className="text-[10px] text-slate-400 font-semibold uppercase block">Terakhir Cadangkan</span>
+                <span className="text-xs font-bold text-slate-700 block">
+                  {backupInfo?.lastBackupTime 
+                    ? new Date(backupInfo.lastBackupTime).toLocaleString("id-ID", { dateStyle: "long", timeStyle: "medium" }) 
+                    : "Belum pernah dicadangkan"}
+                </span>
+                <span className="text-[9px] text-slate-400 block leading-tight">Hari sinkronisasi: {backupInfo?.lastBackupDate || "-"}</span>
+              </div>
+
+              <div className="space-y-1">
+                <span className="text-[10px] text-slate-400 font-semibold uppercase block">Lokasi Folder Google Drive</span>
+                <span className="text-xs font-semibold text-slate-600 block truncate font-mono">
+                  {driveFolderId || "Default Folder"}
+                </span>
+                <a 
+                  href={driveFolderId ? `https://drive.google.com/drive/folders/${driveFolderId}` : "https://drive.google.com/"}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-[9px] text-indigo-600 font-semibold hover:underline flex items-center gap-0.5"
+                >
+                  Buka Folder Drive <ExternalLink className="w-2.5 h-2.5" />
+                </a>
+              </div>
+
+              <div className="flex items-center justify-end">
+                <button
+                  type="button"
+                  onClick={handleRunBackup}
+                  disabled={isBackupRunning}
+                  className="w-full md:w-auto bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 text-white font-semibold py-2 px-4 rounded-xl text-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-xs active:scale-95"
+                >
+                  {isBackupRunning ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" /> Sedang Cadangkan...
+                    </>
+                  ) : (
+                    <>
+                      <Printer className="w-3.5 h-3.5" /> Cadangkan Sekarang (.xlsx)
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+
+            {/* Backup logs history list */}
+            {backupInfo?.history && backupInfo.history.length > 0 && (
+              <div className="space-y-2 mt-2">
+                <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Riwayat Cadangan Sinkronisasi</span>
+                
+                <div className="overflow-x-auto rounded-lg border border-slate-150">
+                  <table className="w-full text-left text-[11px] text-slate-600">
+                    <thead className="bg-slate-50 text-[10px] text-slate-400 font-semibold uppercase border-b border-slate-150">
+                      <tr>
+                        <th className="p-2 w-32">Waktu Cadangan</th>
+                        <th className="p-2">Nama Berkas Cadangan</th>
+                        <th className="p-2 text-center w-24">Jumlah Data</th>
+                        <th className="p-2 text-center w-24">MimeType</th>
+                        <th className="p-2 text-center w-24">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 text-slate-700 bg-white">
+                      {backupInfo.history.slice(0, 5).map((log, index) => (
+                        <tr key={index} className="hover:bg-slate-50/50">
+                          <td className="p-2 font-mono text-[10px]">
+                            {new Date(log.timestamp).toLocaleString("id-ID", { dateStyle: "short", timeStyle: "medium" })}
+                          </td>
+                          <td className="p-2 font-medium truncate max-w-[200px]" title={log.fileName}>
+                            {log.fileName}
+                          </td>
+                          <td className="p-2 text-center font-bold text-slate-600">
+                            {log.recordCount} Baris
+                          </td>
+                          <td className="p-2 text-center text-[10px] text-slate-400 font-mono">
+                            Excel (.xlsx)
+                          </td>
+                          <td className="p-2 text-center">
+                            {log.success ? (
+                              <span className="inline-block bg-emerald-50 text-emerald-700 text-[9px] font-bold px-1.5 py-0.5 rounded-md border border-emerald-150">
+                                Berhasil
+                              </span>
+                            ) : (
+                              <span 
+                                className="inline-block bg-rose-50 text-rose-700 text-[9px] font-bold px-1.5 py-0.5 rounded-md border border-rose-150 cursor-help"
+                                title={log.error || "Gagal sinkronisasi"}
+                              >
+                                Gagal
+                              </span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
           </div>
         </motion.div>
       )}
@@ -2169,6 +2494,57 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
               </ResponsiveContainer>
             </div>
           </div>
+
+          {/* Tren Kehadiran Panel - LineChart */}
+          <div className="bg-white rounded-xl border border-slate-150/60 shadow-sm p-5 lg:col-span-2">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
+              <div>
+                <h3 className="text-sm font-semibold text-slate-800 flex items-center gap-1.5">
+                  <Calendar className="w-4 h-4 text-indigo-600" /> Tren Kehadiran Peserta (Harian)
+                </h3>
+                <p className="text-[11px] text-slate-500 mt-0.5">
+                  Visualisasi tingkat partisipasi dan jumlah peserta yang hadir dari hari ke hari
+                </p>
+              </div>
+
+              <div className="text-[11px] font-medium text-slate-500 bg-slate-50 px-2.5 py-1 rounded-lg border border-slate-100">
+                Total Hari Terdeteksi: <span className="font-bold text-slate-800">{(stats.dailyParticipation || []).length} Hari</span>
+              </div>
+            </div>
+
+            <div className="h-64 w-full text-xs">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={stats.dailyParticipation || []} margin={{ top: 15, right: 20, left: -20, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                  <XAxis 
+                    dataKey="label" 
+                    stroke="#94a3b8" 
+                    tickLine={false}
+                    axisLine={false}
+                  />
+                  <YAxis 
+                    stroke="#94a3b8" 
+                    allowDecimals={false} 
+                    tickLine={false}
+                    axisLine={false}
+                  />
+                  <Tooltip 
+                    contentStyle={{ fontSize: "11px", borderRadius: "8px", border: "1px solid #e2e8f0" }}
+                    formatter={(value) => [`${value} Orang`, "Kehadiran"]}
+                  />
+                  <Line 
+                    type="monotone" 
+                    dataKey="count" 
+                    name="Peserta Hadir" 
+                    stroke="#4f46e5" 
+                    strokeWidth={3} 
+                    activeDot={{ r: 7, strokeWidth: 0 }}
+                    dot={{ stroke: '#4f46e5', strokeWidth: 2, r: 4, fill: '#fff' }}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
         </div>
       )}
 
@@ -2237,6 +2613,21 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
                 <FileDown className="w-3.5 h-3.5" />
               )}
               {isExportingPdf ? pdfProgressText || "Mengolah PDF..." : "Unduh Laporan PDF"}
+            </button>
+            <button
+              onClick={() => exportToPdf(true)}
+              disabled={isExportingPdf || isExportingExcel || filteredAttendees.length === 0}
+              className={`bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200 px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1 transition-all ${
+                isExportingPdf ? "opacity-[0.80] cursor-wait" : "hover:scale-[1.01] active:scale-[0.99] cursor-pointer"
+              } ${filteredAttendees.length === 0 ? "opacity-50 cursor-not-allowed" : ""}`}
+              title="Cetak massal seluruh data peserta yang terfilter saat ini"
+            >
+              {isExportingPdf ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Printer className="w-3.5 h-3.5" />
+              )}
+              Cetak Massal ({filteredAttendees.length})
             </button>
 
             {/* Clean data button */}
@@ -2373,18 +2764,48 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
                 </thead>
                 <tbody className="divide-y divide-slate-100 text-xs text-slate-700">
                   <AnimatePresence initial={false}>
-                    {filteredAttendees.map((a, idx) => (
-                      <motion.tr
-                        key={a.nip + "-" + idx}
-                        initial={{ opacity: 0, y: 12 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        exit={{ opacity: 0, y: -12 }}
-                        layout="position"
-                        transition={{ duration: 0.25, ease: "easeInOut" }}
-                        className="hover:bg-slate-50/50 transition-colors"
-                      >
-                        <td className="py-2.5 px-4 text-center font-medium text-slate-400">{idx + 1}</td>
-                        <td className="py-2.5 px-4 font-semibold text-slate-800">{a.name}</td>
+                    {filteredAttendees.map((a, idx) => {
+                      const rowKey = `${(a.nip || "").trim().toLowerCase()}_${(a.name || "").trim().toLowerCase()}`;
+                      const isHighlighted = recentAttendeeKeys[rowKey] !== undefined;
+
+                      return (
+                        <motion.tr
+                          key={a.nip + "-" + idx}
+                          initial={{ opacity: 0, y: 12 }}
+                          animate={{ 
+                            opacity: 1, 
+                            y: 0,
+                            backgroundColor: isHighlighted ? "rgba(16, 185, 129, 0.12)" : "rgba(255, 255, 255, 0)"
+                          }}
+                          exit={{ opacity: 0, y: -12 }}
+                          layout="position"
+                          transition={{ duration: 0.35, ease: "easeInOut" }}
+                          className={`transition-all duration-700 ${
+                            isHighlighted 
+                              ? "border-l-4 border-l-emerald-500 text-emerald-950 dark:text-emerald-100 font-medium shadow-xs" 
+                              : "hover:bg-slate-50/50"
+                          }`}
+                        >
+                          <td className="py-2.5 px-4 text-center font-medium text-slate-400">
+                            {isHighlighted ? (
+                              <span className="inline-flex items-center justify-center bg-emerald-500 text-white text-[9px] font-extrabold px-1.5 py-0.5 rounded-sm animate-pulse">
+                                BARU
+                              </span>
+                            ) : (
+                              idx + 1
+                            )}
+                          </td>
+                        <td className="py-2.5 px-4">
+                          <button
+                            type="button"
+                            onClick={() => setSelectedProfileAttendee(a)}
+                            className="font-bold text-slate-800 hover:text-indigo-600 hover:underline transition-all duration-150 text-left cursor-pointer flex items-center gap-1 group/name"
+                            title="Klik untuk melihat profil & statistik lengkap"
+                          >
+                            <span>{a.name}</span>
+                            <ChevronRight className="w-3 h-3 opacity-0 group-hover/name:opacity-100 group-hover/name:translate-x-0.5 text-indigo-500 transition-all duration-150" />
+                          </button>
+                        </td>
                         <td className="py-2.5 px-4 font-mono text-[10.5px] text-slate-600">{a.nip}</td>
                         <td className="py-2.5 px-4 text-slate-600">{a.instansi}</td>
                         <td className="py-2.5 px-4 text-slate-600">{a.jabatan}</td>
@@ -2435,7 +2856,8 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
                           </div>
                         </td>
                       </motion.tr>
-                    ))}
+                    );
+                    })}
                   </AnimatePresence>
                 </tbody>
               </table>
@@ -2443,6 +2865,183 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
           </div>
         )}
       </div>
+
+      {/* Participant Profile & Statistics Modal */}
+      {selectedProfileAttendee && (() => {
+        const p = selectedProfileAttendee;
+        // Calculate dynamic personal stats safely
+        const sameInst = attendees.filter(x => x.instansi === p.instansi).length;
+        const totalCount = attendees.length || 1;
+        const pctSameInst = Math.round((sameInst / totalCount) * 100);
+        
+        // Find check-in sequence number
+        const chronologicallySorted = [...attendees].sort((a, b) => {
+          return new Date(a.checkInTime).getTime() - new Date(b.checkInTime).getTime();
+        });
+        const sequenceIndex = chronologicallySorted.findIndex(x => x.nip === p.nip) + 1;
+        const nthLabel = sequenceIndex > 0 ? `Peserta Ke-${sequenceIndex}` : "Selesai Terdaftar";
+        
+        // Calculate status badge based on entry hour
+        let checkInHour = 8; // fallback
+        try {
+          const timePart = p.checkInTime.split(" ")[1];
+          if (timePart) {
+            checkInHour = parseInt(timePart.split(":")[0], 10);
+          }
+        } catch (e) {}
+
+        const isEarly = checkInHour < 9;
+        const timeBadgeText = isEarly ? "Hadir Awal (Tepat Waktu)" : "Hadir Normal";
+
+        // Assign honorary titles/badges
+        let rankTitle = "Utusan Khusus";
+        if (sequenceIndex === 1) rankTitle = "Pionir Kehadiran (Ke-1)";
+        else if (sequenceIndex <= 5) rankTitle = "Early Bird Prioritas";
+        else if (sameInst > 5 && p.jabatan?.toLowerCase().includes("pimpinan")) rankTitle = "Senior Delegat";
+        else if (p.jabatan?.toLowerCase().includes("kepala") || p.jabatan?.toLowerCase().includes("kabag") || p.jabatan?.toLowerCase().includes("kasi")) rankTitle = "Pimpinan Delegasi";
+        else if (sameInst > 3) rankTitle = "Perwakilan Utama";
+
+        const initials = p.name ? p.name.trim().split(" ").map(w => w[0]).slice(0, 2).join("").toUpperCase() : "P";
+
+        return (
+          <div className="fixed inset-0 z-50 bg-slate-900/60 flex items-center justify-center p-4 backdrop-blur-xs">
+            <motion.div 
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-white rounded-2xl max-w-lg w-full overflow-hidden shadow-2xl relative border border-slate-150"
+            >
+              {/* Modal Header banner with solid modern color */}
+              <div className="bg-gradient-to-r from-slate-900 via-indigo-900 to-slate-900 p-6 text-white relative">
+                <button
+                  type="button"
+                  onClick={() => setSelectedProfileAttendee(null)}
+                  className="absolute top-4 right-4 p-2 rounded-xl bg-white/10 hover:bg-white/20 text-white transition-all duration-200 cursor-pointer border-0"
+                  title="Tutup Panel"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+                <div className="flex items-center gap-4">
+                  {/* High contrast initials avatar */}
+                  <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-amber-400 to-indigo-500 flex items-center justify-center text-white font-black text-lg shadow-md shrink-0 border-2 border-white/25">
+                    {initials}
+                  </div>
+                  <div className="space-y-0.5 truncate">
+                    <span className="bg-amber-400 text-slate-950 text-[9px] font-black px-2 py-0.5 rounded-sm uppercase tracking-wide">
+                      {rankTitle}
+                    </span>
+                    <h3 className="text-base font-bold truncate leading-tight mt-1">{p.name}</h3>
+                    <p className="text-[11px] text-slate-300 font-mono tracking-wider">{p.nip || "NIP Belum Diisi"}</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Modal Body scrollable area */}
+              <div className="p-6 space-y-5 max-h-[70vh] overflow-y-auto text-slate-700">
+                {/* 1. Core Profile Details Grid */}
+                <div className="space-y-3">
+                  <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-1">
+                    <User className="w-3.5 h-3.5 text-indigo-600" /> Informasi Pribadi & Tugas
+                  </h4>
+                  <div className="bg-slate-50 border border-slate-200/85 rounded-xl p-3.5 grid grid-cols-2 gap-x-4 gap-y-3.5">
+                    <div className="space-y-0.5">
+                      <span className="text-[10px] text-slate-400 font-semibold block uppercase">Nama Lengkap</span>
+                      <span className="text-xs font-bold text-slate-700 block">{p.name || "-"}</span>
+                    </div>
+                    <div className="space-y-0.5">
+                      <span className="text-[10px] text-slate-400 font-semibold block uppercase">Nomor Induk Pegawai (NIP)</span>
+                      <span className="text-xs font-bold font-mono text-slate-700 block">{p.nip || "-"}</span>
+                    </div>
+                    <div className="space-y-0.5">
+                      <span className="text-[10px] text-slate-400 font-semibold block uppercase">Instansi Satuan Kerja</span>
+                      <span className="text-xs font-bold text-slate-700 block">{p.instansi || "-"}</span>
+                    </div>
+                    <div className="space-y-0.5">
+                      <span className="text-[10px] text-slate-400 font-semibold block uppercase">Jabatan Struktural / Peran</span>
+                      <span className="text-xs font-bold text-slate-700 block">{p.jabatan || "-"}</span>
+                    </div>
+                    <div className="space-y-0.5 col-span-2 border-t border-slate-200/50 pt-2.5">
+                      <span className="text-[10px] text-slate-400 font-semibold block uppercase">Alamat Email Kerja</span>
+                      <span className="text-xs font-semibold text-slate-600 block">{p.email || "-"}</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 2. Statistical Metrics Benchmarking Cards */}
+                <div className="space-y-3">
+                  <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-1">
+                    <TrendingUp className="w-3.5 h-3.5 text-indigo-600" /> Analisis Kehadiran & Statistik Kontribusi
+                  </h4>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div className="bg-slate-50 border border-slate-200/85 rounded-xl p-3 space-y-1">
+                      <span className="text-[9px] text-slate-400 font-bold block uppercase leading-tight">Urutan Masuk</span>
+                      <span className="text-xs font-extrabold text-slate-700 block">{nthLabel}</span>
+                      <span className="text-[9px] text-indigo-600 block font-semibold leading-tight">
+                        Dari {totalCount} total pendaftar
+                      </span>
+                    </div>
+
+                    <div className="bg-slate-50 border border-slate-200/85 rounded-xl p-3 space-y-1">
+                      <span className="text-[9px] text-slate-400 font-bold block uppercase leading-tight">Status Waktu</span>
+                      <span className="text-xs font-extrabold text-slate-700 block text-ellipsis truncate">{timeBadgeText}</span>
+                      <span className="text-[9px] text-slate-400 block font-semibold leading-tight">
+                        Jam: {p.checkInTime.split(" ")[1] || "08:00"}
+                      </span>
+                    </div>
+
+                    <div className="bg-slate-50 border border-slate-200/85 rounded-xl p-3 space-y-1">
+                      <span className="text-[9px] text-slate-400 font-bold block uppercase leading-tight">Kontribusi Instansi</span>
+                      <span className="text-xs font-extrabold text-slate-700 block">{sameInst} Orang ({pctSameInst}%)</span>
+                      <span className="text-[9px] text-slate-400 block font-semibold leading-tight">
+                        Mengirim delegasi terbanyak
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 3. Digital Signature Verified Canvas Area */}
+                <div className="space-y-3">
+                  <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-1">
+                    <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" /> Lembar Tanda Tangan Digital Terverifikasi
+                  </h4>
+                  <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 flex flex-col items-center justify-center min-h-[120px] relative overflow-hidden">
+                    {p.signatureUrl ? (
+                      <>
+                        <img 
+                          src={p.signatureUrl} 
+                          alt={`Tanda Tangan ${p.name}`} 
+                          className="max-h-[85px] object-contain select-none bg-white p-1 rounded-lg border border-slate-200"
+                          referrerPolicy="no-referrer"
+                        />
+                        <div className="absolute right-3.5 bottom-3 text-[9px] px-2 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-md font-bold uppercase tracking-wider flex items-center gap-1">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                          Terverifikasi Aman
+                        </div>
+                      </>
+                    ) : (
+                      <span className="text-xs italic text-slate-400">Tanda tangan kosong atau tersemat offline</span>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Modal Footer with interactive buttons */}
+              <div className="bg-slate-50 border-t border-slate-100 p-4 flex justify-between items-center">
+                <span className="text-[10px] text-slate-400 font-mono">
+                  Mendaftar pada: {p.checkInTime}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setSelectedProfileAttendee(null)}
+                  className="px-5 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold transition-all duration-150 pointer-events-auto cursor-pointer active:scale-95 shadow-xs border-0"
+                >
+                  Tutup Profil
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        );
+      })()}
 
       {/* Signature viewer modal */}
       {selectedSignature && (

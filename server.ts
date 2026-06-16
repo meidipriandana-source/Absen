@@ -3,6 +3,7 @@ import path from "path";
 import fs from "fs";
 import { createServer as createViteServer } from "vite";
 import nodemailer from "nodemailer";
+import * as XLSX from "xlsx";
 
 const app = express();
 const PORT = 3000;
@@ -378,22 +379,105 @@ function clearSession() {
   }
 }
 
+// In-memory tracker for active admin sessions (clientId -> lastSeenTime)
+const activeAdminsTracker = new Map<string, number>();
+let lastSpreadsheetCheckTime = 0;
+let cachedSpreadsheetStatus: "connected" | "unconfigured" | "error" = "unconfigured";
+let cachedSpreadsheetError: string | null = null;
+
+async function checkSpreadsheetConnection(token: string, spreadsheetId: string): Promise<{ status: "connected" | "error"; error: string | null }> {
+  if (!token || !spreadsheetId) {
+    return { status: "error", error: "Token atau ID Spreadsheet tidak valid." };
+  }
+  try {
+    const checkRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}?fields=spreadsheetId`, {
+      headers: { "Authorization": `Bearer ${token}` }
+    });
+    if (checkRes.ok) {
+      return { status: "connected", error: null };
+    } else {
+      const txt = await checkRes.text();
+      let shortError = "Gagal menghubungi Google API";
+      if (txt.includes("invalid_grant") || txt.includes("expired")) {
+        shortError = "Sesi Google telah kadaluarsa (re-login)";
+      } else if (txt.includes("not found") || txt.includes("404")) {
+        shortError = "Spreadsheet tidak ditemukan";
+      }
+      return { status: "error", error: shortError };
+    }
+  } catch (err: any) {
+    return { status: "error", error: err.message || "Kesalahan jaringan" };
+  }
+}
+
 // ==========================================
 // API ENDPOINTS
 // ==========================================
 
 // Get session status (checks if check-in mode is active)
-app.get("/api/session-status", (req, res) => {
+app.get("/api/session-status", async (req, res) => {
   const session = loadSession();
+  
+  // Track active admin administrators
+  const adminClientId = req.query.adminClientId as string;
+  if (adminClientId) {
+    activeAdminsTracker.set(adminClientId, Date.now());
+  }
+
+  // Prune inactive admins (older than 25s)
+  const now = Date.now();
+  for (const [id, lastSeen] of activeAdminsTracker.entries()) {
+    if (now - lastSeen > 25000) {
+      activeAdminsTracker.delete(id);
+    }
+  }
+  
+  // Standard minimum is 1 if they are querying (which means someone is looking at least)
+  const activeAdminCount = Math.max(1, activeAdminsTracker.size);
+
+  // Spreadsheet API connections check
+  let googleSpreadsheetStatus: "connected" | "unconfigured" | "error" = "unconfigured";
+  let googleSpreadsheetError: string | null = null;
+
+  if (session && session.accessToken && session.spreadsheetId) {
+    // Cache check results for 15s to keep dashboard updates ultra-fast
+    if (now - lastSpreadsheetCheckTime > 15000) {
+      lastSpreadsheetCheckTime = now;
+      try {
+        const check = await checkSpreadsheetConnection(session.accessToken, session.spreadsheetId);
+        cachedSpreadsheetStatus = check.status;
+        cachedSpreadsheetError = check.error;
+      } catch (err: any) {
+        cachedSpreadsheetStatus = "error";
+        cachedSpreadsheetError = err.message || "Kesalahan tidak diketahui.";
+      }
+    }
+    googleSpreadsheetStatus = cachedSpreadsheetStatus;
+    googleSpreadsheetError = cachedSpreadsheetError;
+  } else if (session && session.accessToken) {
+    googleSpreadsheetStatus = "error";
+    googleSpreadsheetError = "Spreadsheet belum dibuat atau diset.";
+  } else {
+    googleSpreadsheetStatus = "unconfigured";
+  }
+
   if (session) {
     res.json({ 
       active: !!session.isSessionActive, 
       savedAt: session.savedAt,
       spreadsheetId: session.spreadsheetId || null,
-      driveFolderId: session.driveFolderId || null
+      driveFolderId: session.driveFolderId || null,
+      activeAdminCount,
+      googleSpreadsheetStatus,
+      googleSpreadsheetError
     });
   } else {
-    res.json({ active: false });
+    res.json({ 
+      active: false,
+      activeAdminCount,
+      googleSpreadsheetStatus,
+      googleSpreadsheetError
+    });
   }
 });
 
@@ -797,6 +881,17 @@ app.post("/api/submit-attendance", async (req, res) => {
     list.push(newAttendee);
     saveLocalAttendees(list);
 
+    // Background Automatic Daily Backup check on new sign-in
+    try {
+      const historyInfo = loadBackupHistory();
+      const nowStr = new Date().toISOString().split("T")[0]; // YYYY-MM-DD
+      if (historyInfo.lastBackupDate !== nowStr) {
+        performGoogleDriveBackup(false).catch(e => console.error("[Auto Daily Backup on check-in] Failed:", e));
+      }
+    } catch (e) {
+      console.error("[Auto Daily Backup Check] Failed during submission:", e);
+    }
+
     res.json({
       success: true,
       data: {
@@ -1005,9 +1100,216 @@ app.get("/api/proxy-signature", async (req, res) => {
 });
 
 // ==========================================
+// GOOGLE DRIVE AUTOMATIC DAILY BACKUP SYSTEM
+// ==========================================
+
+export interface BackupLog {
+  timestamp: number;
+  date: string;
+  success: boolean;
+  fileName: string;
+  fileId: string | null;
+  error: string | null;
+  recordCount: number;
+}
+
+export interface BackupHistoryInfo {
+  lastBackupDate: string | null;
+  lastBackupTime: number | null;
+  history: BackupLog[];
+}
+
+const BACKUP_HISTORY_FILE = path.join(process.cwd(), "backup_history.json");
+
+function loadBackupHistory(): BackupHistoryInfo {
+  try {
+    if (fs.existsSync(BACKUP_HISTORY_FILE)) {
+      const data = fs.readFileSync(BACKUP_HISTORY_FILE, "utf-8");
+      return JSON.parse(data);
+    }
+  } catch (err) {
+    console.error("Error reading backup history file:", err);
+  }
+  return { lastBackupDate: null, lastBackupTime: null, history: [] };
+}
+
+function saveBackupHistory(info: BackupHistoryInfo) {
+  try {
+    fs.writeFileSync(BACKUP_HISTORY_FILE, JSON.stringify(info, null, 2), "utf-8");
+  } catch (err) {
+    console.error("Error writing backup history file:", err);
+  }
+}
+
+function generateExcelBuffer(attendees: LocalAttendee[]): Buffer {
+  const data = attendees.map((a, index) => ({
+    "No": index + 1,
+    "NIP": a.nip || "-",
+    "Nama Lengkap": a.name || "-",
+    "Instansi": a.instansi || "-",
+    "Jabatan": a.jabatan || "-",
+    "Email": a.email || "-",
+    "Waktu Check-In": a.checkInTime || "-",
+    "URL Google Drive Tanda Tangan": a.signatureFileId ? `https://drive.google.com/thumbnail?id=${a.signatureFileId}&sz=w500` : (a.signatureUrl || "-")
+  }));
+
+  const worksheet = XLSX.utils.json_to_sheet(data);
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, "Daftar Hadir");
+  
+  // Custom Column Widths
+  const widths = [
+    { wch: 6 },   // No
+    { wch: 22 },  // NIP
+    { wch: 30 },  // Nama Lengkap
+    { wch: 25 },  // Instansi
+    { wch: 25 },  // Jabatan
+    { wch: 28 },  // Email
+    { wch: 22 },  // Waktu Check-In
+    { wch: 45 }   // URL Tanda Tangan
+  ];
+  worksheet["!cols"] = widths;
+
+  const excelBuffer = XLSX.write(workbook, { type: "buffer", bookType: "xlsx" });
+  return excelBuffer as Buffer;
+}
+
+async function performGoogleDriveBackup(isManual = false): Promise<BackupLog> {
+  const session = loadSession();
+  const attendees = loadLocalAttendees();
+  
+  const now = new Date();
+  const pad = (n: number) => n.toString().padStart(2, "0");
+  const dateStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+  const timeStr = `${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+  const fileName = `Cadangan_Daftar_Hadir_${dateStr.replace(/-/g, "_")}_${timeStr}.xlsx`;
+
+  const log: BackupLog = {
+    timestamp: Date.now(),
+    date: dateStr,
+    success: false,
+    fileName,
+    fileId: null,
+    error: null,
+    recordCount: attendees.length
+  };
+
+  if (!session || !session.accessToken) {
+    log.error = "Token Google Drive belum aktif atau sesi admin kadaluarsa. Hubungkan kembali akun Google Anda di pengaturan panel.";
+    recordBackupLog(log);
+    return log;
+  }
+
+  try {
+    const backupFolderId = session.driveFolderId || '1UseBW7ICFFT-cUPD1HC3KrJUhLCVgEgR';
+    const excelBuffer = generateExcelBuffer(attendees);
+
+    // 1. Create File metadata
+    const metaResponse = await fetch("https://www.googleapis.com/drive/v3/files", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${session.accessToken}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        name: fileName,
+        parents: [backupFolderId],
+        mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+      })
+    });
+
+    if (!metaResponse.ok) {
+      const errText = await metaResponse.text();
+      throw new Error(`Gagal membuat metadata backup di Drive: ${errText}`);
+    }
+
+    const metaData = (await metaResponse.json()) as { id: string };
+    const fileId = metaData.id;
+
+    // 2. Upload binary stream
+    const uploadResponse = await fetch(`https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`, {
+      method: "PATCH",
+      headers: {
+        "Authorization": `Bearer ${session.accessToken}`,
+        "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+      },
+      body: excelBuffer
+    });
+
+    if (!uploadResponse.ok) {
+      const errText = await uploadResponse.text();
+      throw new Error(`Gagal mengunggah file media backup ke Drive: ${errText}`);
+    }
+
+    log.success = true;
+    log.fileId = fileId;
+    console.log(`[Google Drive Backup_AutoSync] Backup successfully saved to Google Drive: ${fileName} (ID: ${fileId})`);
+  } catch (err: any) {
+    console.error(`[Google Drive Backup_AutoSync] Backup failed:`, err);
+    log.error = err.message || "Kesalahan koneksi ke layanan awan Google Drive.";
+  }
+
+  recordBackupLog(log);
+  return log;
+}
+
+function recordBackupLog(log: BackupLog) {
+  const info = loadBackupHistory();
+  if (log.success) {
+    info.lastBackupDate = log.date;
+    info.lastBackupTime = log.timestamp;
+  }
+  info.history = [log, ...info.history].slice(0, 15);
+  saveBackupHistory(info);
+}
+
+// Get Google Drive Backup settings and sync status
+app.get("/api/backup/status", (req, res) => {
+  res.json(loadBackupHistory());
+});
+
+// Manually trigger Google Drive Backup
+app.post("/api/backup/run", async (req, res) => {
+  try {
+    const log = await performGoogleDriveBackup(true);
+    if (log.success) {
+      res.json({ 
+        success: true, 
+        message: `Cadangan data absensi berhasil disimpan ke Google Drive dengan nama: ${log.fileName}`, 
+        log 
+      });
+    } else {
+      res.status(500).json({ error: log.error || "Gagal melakukan backup ke Google Drive." });
+    }
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || "Terjadi kesalahan internal saat membuat cadangan absensi." });
+  }
+});
+
+// ==========================================
 // VITE AND STATIC SERVING MAIN SETUP
 // ==========================================
 async function startServer() {
+  // Start a periodic 30-minute interval for automatic daily backups
+  setInterval(() => {
+    try {
+      const session = loadSession();
+      if (session && session.accessToken) {
+        const historyInfo = loadBackupHistory();
+        const nowObj = new Date();
+        const nowStr = `${nowObj.getFullYear()}-${(nowObj.getMonth()+1).toString().padStart(2, "0")}-${nowObj.getDate().toString().padStart(2, "0")}`;
+        const attendees = loadLocalAttendees();
+        
+        if (attendees.length > 0 && historyInfo.lastBackupDate !== nowStr) {
+          console.log(`[Auto-Backup Timer] Running scheduled automatic daily backup to Google Drive...`);
+          performGoogleDriveBackup(false).catch(e => console.error("Periodic Auto Google Drive Backup failed:", e));
+        }
+      }
+    } catch (e) {
+      console.error("[Auto-Backup Timer] Error running timer check:", e);
+    }
+  }, 1800000); // 30 minutes
+
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
       server: { middlewareMode: true },

@@ -18,4 +18,5 @@ export interface DashboardStats {
   timeline: { time: string; count: number }[];
   hourly?: { hour: string; count: number }[];
   cumulative?: { time: string; total: number; countAtMinute?: number }[];
+  dailyParticipation?: { date: string; label: string; count: number }[];
 }

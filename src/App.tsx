@@ -339,17 +339,51 @@ export default function App() {
             </button>
           </div>
 
-          <button
+          <motion.button
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
             onClick={toggleDarkMode}
-            className="p-2.5 rounded-xl bg-slate-950/40 hover:bg-slate-950/70 border border-white/5 text-slate-400 hover:text-amber-400 cursor-pointer transition-all duration-200 flex items-center justify-center shadow-inner active:scale-90"
+            className="px-3 py-1.5 rounded-xl bg-slate-950/40 hover:bg-slate-950/75 border border-white/10 text-slate-400 hover:text-white cursor-pointer transition-all duration-300 flex items-center gap-2 shadow-inner group relative overflow-hidden"
             title={darkMode ? "Ubah ke Mode Terang (Light Mode)" : "Ubah ke Mode Gelap (Dark Mode)"}
+            id="theme-switcher-btn"
           >
-            {darkMode ? (
-              <Sun className="w-3.5 h-3.5 text-amber-400" />
-            ) : (
-              <Moon className="w-3.5 h-3.5 text-indigo-300" />
-            )}
-          </button>
+            {/* Animated subtle spotlight beam in background */}
+            <span className="absolute inset-0 bg-gradient-to-r from-indigo-500/10 to-amber-500/10 opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
+
+            <div className="relative w-4 h-4 flex items-center justify-center">
+              <AnimatePresence mode="wait" initial={false}>
+                {darkMode ? (
+                  <motion.div
+                    key="sun"
+                    initial={{ rotate: -90, scale: 0, opacity: 0 }}
+                    animate={{ rotate: 0, scale: 1, opacity: 1 }}
+                    exit={{ rotate: 90, scale: 0, opacity: 0 }}
+                    transition={{ type: "spring", stiffness: 300, damping: 20 }}
+                  >
+                    <Sun className="w-4 h-4 text-amber-400 drop-shadow-[0_0_6px_rgba(251,191,36,0.5)] animate-pulse" />
+                  </motion.div>
+                ) : (
+                  <motion.div
+                    key="moon"
+                    initial={{ rotate: 90, scale: 0, opacity: 0 }}
+                    animate={{ rotate: 0, scale: 1, opacity: 1 }}
+                    exit={{ rotate: -90, scale: 0, opacity: 0 }}
+                    transition={{ type: "spring", stiffness: 300, damping: 20 }}
+                  >
+                    <Moon className="w-4 h-4 text-indigo-300 drop-shadow-[0_0_6px_rgba(165,180,252,0.5)]" />
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+
+            <span className="text-[10px] font-bold tracking-wider uppercase select-none transition-colors duration-300">
+              {darkMode ? (
+                <span className="text-amber-400 group-hover:text-amber-300 font-extrabold">MODE GELAP</span>
+              ) : (
+                <span className="text-indigo-300 group-hover:text-indigo-200 font-extrabold">MODE TERANG</span>
+              )}
+            </span>
+          </motion.button>
         </div>
       </header>
 
