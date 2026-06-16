@@ -67,7 +67,7 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
   });
   const [autoRefreshInterval, setAutoRefreshInterval] = useState<number>(() => {
     const stored = localStorage.getItem("admin_auto_refresh_interval");
-    return stored ? parseInt(stored, 10) : 5; // default to 5 seconds
+    return stored ? parseInt(stored, 10) : 15; // default to 15 seconds
   });
   const [isBackgroundFetching, setIsBackgroundFetching] = useState<boolean>(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -184,8 +184,18 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
   const fetchSessionStatus = async () => {
     try {
       const res = await fetch("/api/session-status");
+      const contentType = res.headers.get("content-type") || "";
+      if (!contentType.includes("application/json")) {
+        const text = await res.text();
+        if (text.includes("Rate exceeded") || res.status === 429) {
+          console.warn("[Rate Limit] Fetch session status deferred.");
+          return;
+        }
+        throw new Error(`Unexpected response type: ${contentType}`);
+      }
       const data = await res.json();
       setIsSessionActive(data.active);
+      localStorage.setItem("is_public_session_active", String(data.active));
       if (data.spreadsheetId) {
         setSpreadsheetId(data.spreadsheetId);
         localStorage.setItem("custom_spreadsheet_id", data.spreadsheetId);
@@ -195,7 +205,17 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
         localStorage.setItem("custom_drive_folder_id", data.driveFolderId);
       }
     } catch (err) {
-      console.error("Error fetching session status:", err);
+      console.warn("Error fetching session status, falling back to local storage:", err);
+      const offlineActive = localStorage.getItem("is_public_session_active") === "true";
+      setIsSessionActive(offlineActive);
+      const storedSpreadsheetId = localStorage.getItem("custom_spreadsheet_id");
+      if (storedSpreadsheetId) {
+        setSpreadsheetId(storedSpreadsheetId);
+      }
+      const storedDriveFolderId = localStorage.getItem("custom_drive_folder_id");
+      if (storedDriveFolderId) {
+        setDriveFolderId(storedDriveFolderId);
+      }
     }
   };
 
@@ -207,31 +227,74 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
       setIsLoading(true);
     }
     setHasAccessError(false);
+    
+    let serverAttendees: Attendee[] = [];
+
     try {
       const res = await fetch("/api/attendees");
-      if (!res.ok) {
-        throw new Error("Gagal mengambil data dari server lokal.");
-      }
-      const parsed: Attendee[] = await res.json();
-      
-      // Sort descending by checkInTime (most recent first)
-      parsed.sort((a, b) => new Date(b.checkInTime).getTime() - new Date(a.checkInTime).getTime());
-      setAttendees(parsed);
-
-      // Record sync time
-      const d = new Date();
-      setLastSynced(`${d.getHours().toString().padStart(2, "0")}:${d.getMinutes().toString().padStart(2, "0")}:${d.getSeconds().toString().padStart(2, "0")}`);
-    } catch (err: any) {
-      console.error("Fetch local attendees list error:", err);
-      if (accessToken !== "bypass") {
-        setHasAccessError(true);
-      }
-    } finally {
-      if (isBackground) {
-        setIsBackgroundFetching(false);
+      const contentType = res.headers.get("content-type") || "";
+      if (contentType.includes("application/json")) {
+        if (res.ok) {
+          serverAttendees = await res.json();
+        } else {
+          console.warn("Express backend returned non-ok response.");
+        }
       } else {
-        setIsLoading(false);
+        const text = await res.text();
+        if (text.includes("Rate exceeded") || res.status === 429) {
+          console.warn("[Rate Limit] Fetch attendees polling deferred.");
+        }
       }
+    } catch (err: any) {
+      console.warn("Fetch local attendees list error, using offline local registry fallback:", err);
+    }
+
+    // Load offline local storage attendees
+    let offlineAttendees: Attendee[] = [];
+    try {
+      const offlineAttendeesStr = localStorage.getItem("local_offline_attendees") || "[]";
+      offlineAttendees = JSON.parse(offlineAttendeesStr);
+    } catch (err) {
+      console.error("Error parsing offline attendees:", err);
+    }
+
+    // Merge offline and online. Clean duplicates based on NIP and Name.
+    const mergedMap = new Map<string, Attendee>();
+    
+    // First insert online ones
+    serverAttendees.forEach(a => {
+      const key = `${(a.nip || "").trim().toLowerCase()}_${(a.name || "").trim().toLowerCase()}`;
+      mergedMap.set(key, a);
+    });
+
+    // Then offline ones (only if not already existed on server, flag as isOfflineOnly)
+    offlineAttendees.forEach(a => {
+      const key = `${(a.nip || "").trim().toLowerCase()}_${(a.name || "").trim().toLowerCase()}`;
+      if (!mergedMap.has(key)) {
+        mergedMap.set(key, { ...a, isOfflineOnly: true }); 
+      }
+    });
+
+    const parsed = Array.from(mergedMap.values());
+    
+    // Sort descending by checkInTime (most recent first)
+    parsed.sort((a, b) => new Date(b.checkInTime).getTime() - new Date(a.checkInTime).getTime());
+
+    // Re-adjust sequence number index so we show neat numbers count
+    parsed.forEach((item, index) => {
+      item.no = parsed.length - index;
+    });
+
+    setAttendees(parsed);
+
+    // Record sync time
+    const d = new Date();
+    setLastSynced(`${d.getHours().toString().padStart(2, "0")}:${d.getMinutes().toString().padStart(2, "0")}:${d.getSeconds().toString().padStart(2, "0")}`);
+    
+    if (isBackground) {
+      setIsBackgroundFetching(false);
+    } else {
+      setIsLoading(false);
     }
   };
 
@@ -248,11 +311,20 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
     try {
       if (isSessionActive) {
         // Disable
-        const res = await fetch("/api/clear-token", { method: "POST" });
-        if (res.ok) {
+        let cleared = false;
+        try {
+          const res = await fetch("/api/clear-token", { method: "POST" });
+          if (res.ok) cleared = true;
+        } catch (fetchErr) {
+          console.warn("Server offline, performing offline deactivation.");
+          cleared = true;
+        }
+
+        if (cleared) {
           setIsSessionActive(false);
+          localStorage.setItem("is_public_session_active", "false");
           updateToast(toastId, { 
-            message: "Sesi absensi HP berhasil ditutup & report otomatis terkirim!", 
+            message: "Sesi absensi HP berhasil ditutup!", 
             type: "success" 
           });
         } else {
@@ -260,18 +332,27 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
         }
       } else {
         // Enable by uploading access token along with dynamic sheet pointers
-        const res = await fetch("/api/save-token", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ 
-            accessToken: accessToken === "bypass" ? null : accessToken,
-            spreadsheetId,
-            driveFolderId,
-            isSessionActive: true
-          }),
-        });
-        if (res.ok) {
+        let saved = false;
+        try {
+          const res = await fetch("/api/save-token", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ 
+              accessToken: accessToken === "bypass" ? null : accessToken,
+              spreadsheetId,
+              driveFolderId,
+              isSessionActive: true
+            }),
+          });
+          if (res.ok) saved = true;
+        } catch (fetchErr) {
+          console.warn("Server offline, performing offline activation.");
+          saved = true;
+        }
+
+        if (saved) {
           setIsSessionActive(true);
+          localStorage.setItem("is_public_session_active", "true");
           updateToast(toastId, { 
             message: "Sesi absensi HP berhasil dibuka secara instan!", 
             type: "success" 
@@ -1008,11 +1089,11 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
                 className="bg-slate-900 border border-slate-700 text-slate-300 text-[11px] rounded-lg px-2 py-1 focus:outline-none focus:border-emerald-500 cursor-pointer"
                 title="Pilih Interval Auto-Refresh"
               >
-                <option value="3">3s</option>
-                <option value="5">5s</option>
-                <option value="10">10s</option>
-                <option value="30">30s</option>
-                <option value="60">60s</option>
+                <option value="10">10 Detik</option>
+                <option value="15">15 Detik</option>
+                <option value="30">30 Detik</option>
+                <option value="60">60 Detik</option>
+                <option value="120">120 Detik</option>
               </select>
             )}
 

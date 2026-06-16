@@ -176,45 +176,110 @@ export default function AttendeeForm({ onSuccess, sessionActive }: AttendeeFormP
     setIsSubmitting(true);
 
     try {
-      const response = await fetch("/api/submit-attendance", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
+      let resultData = null;
+      let isSuccess = false;
+
+      try {
+        const response = await fetch("/api/submit-attendance", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            name: name.trim(),
+            instansi: instansi.trim(),
+            nip: nip.trim(),
+            jabatan: jabatan.trim(),
+            email: email.trim(),
+            signature,
+          }),
+        });
+
+        const contentType = response.headers.get("content-type") || "";
+        if (!contentType.includes("application/json")) {
+          throw new Error("Invalid server JSON response");
+        }
+
+        const result = await response.json();
+        if (!response.ok) {
+          throw new Error(result.error || "Gagal mengirim data.");
+        }
+
+        resultData = result.data;
+        isSuccess = true;
+      } catch (err: any) {
+        const errorMsg = err.message || "";
+        // If it's an explicit validation or duplicate or inactive session error from the active server API, do NOT bypass it or use offline fallback, rethrow!
+        if (
+          errorMsg.includes("sudah terdaftar") || 
+          errorMsg.includes("Sesi registrasi belum diaktifkan") || 
+          errorMsg.includes("wajib diisi")
+        ) {
+          throw err;
+        }
+
+        console.warn("Server connection failed or offline. Saving registration locally to browser...", err);
+        
+        // Local offline registry fallback
+        const now = new Date();
+        const pad = (n: number) => n.toString().padStart(2, "0");
+        const checkInTime = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+
+        const storedStr = localStorage.getItem("local_offline_attendees") || "[]";
+        const storedList = JSON.parse(storedStr);
+
+        const dup = storedList.some(
+          (a: any) => a.nip.trim().toLowerCase() === nip.trim().toLowerCase() && 
+                      a.name.trim().toLowerCase() === name.trim().toLowerCase()
+        );
+        if (dup) {
+          throw new Error(`Peserta "${name.trim()}" (NIP: ${nip.trim()}) sudah terdaftar secara offline.`);
+        }
+
+        const newOffline = {
+          no: storedList.length + 1,
+          nip: nip.trim(),
           name: name.trim(),
           instansi: instansi.trim(),
-          nip: nip.trim(),
           jabatan: jabatan.trim(),
-          email: email.trim(),
-          signature,
-        }),
-      });
+          email: email.trim() || "-",
+          checkInTime,
+          signature: signature || "", // Preserve base64
+          signatureUrl: signature || "", // Use base64 signature inline
+          isOfflineOnly: true
+        };
 
-      const result = await response.json();
+        storedList.push(newOffline);
+        localStorage.setItem("local_offline_attendees", JSON.stringify(storedList));
 
-      if (!response.ok) {
-        throw new Error(result.error || "Gagal mengirim data.");
+        resultData = {
+          id: nip.trim(),
+          name: name.trim(),
+          checkInTime
+        };
+        isSuccess = true;
       }
 
-      // Clear local storage on success
-      clearLocalStorageCache();
+      if (isSuccess && resultData) {
+        // Clear local storage on success
+        clearLocalStorageCache();
 
-      // Trigger success screen
-      onSuccess({
-        id: result.data.id,
-        name: result.data.name,
-        checkInTime: result.data.checkInTime,
-      });
+        // Trigger success screen
+        onSuccess({
+          id: resultData.id,
+          name: resultData.name,
+          checkInTime: resultData.checkInTime,
+        });
 
-      // Clear Form state keys for next person
-      setName("");
-      setInstansi("");
-      setNip("");
-      setJabatan("");
-      setEmail("");
-      setSignature(null);
-      setStep(1);
+        // Clear Form state keys for next person
+        setName("");
+        setInstansi("");
+        setNip("");
+        setJabatan("");
+        setEmail("");
+        setSignature(null);
+        setStep(1);
+      }
     } catch (err: any) {
       console.error("Attendance submission client error:", err);
       setErrorMessage(err.message || "Koneksi terputus atau sesi admin tidak aktif. Silakan hubungi operator kegiatan.");

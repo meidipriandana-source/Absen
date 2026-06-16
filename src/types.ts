@@ -8,6 +8,8 @@ export interface Attendee {
   checkInTime: string;
   signatureUrl: string;
   sheetRowIndex?: number;
+  isOfflineOnly?: boolean;
+  signature?: string;
 }
 
 export interface DashboardStats {
