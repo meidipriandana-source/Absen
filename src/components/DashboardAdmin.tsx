@@ -1289,6 +1289,44 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
     setIsSavingEdit(true);
     const toastId = showToast("Menyimpan perubahan data peserta...", "loading", 0);
 
+    let isOfflineUpdated = false;
+    try {
+      // Fast preemptive sync update on Client-Side JSON localStorage (offline fallback / Vercel compatibility)
+      const offlineAttendeesStr = localStorage.getItem("local_offline_attendees") || "[]";
+      const offlineList = JSON.parse(offlineAttendeesStr) as Attendee[];
+      const idx = offlineList.findIndex(a => a.nip === editingAttendee.nip);
+      if (idx !== -1) {
+        offlineList[idx] = {
+          ...offlineList[idx],
+          name: editName,
+          nip: editNip,
+          instansi: editInstansi,
+          jabatan: editJabatan,
+          jenisKegiatan: editJenisKegiatan,
+          judulKegiatan: editJudulKegiatan
+        };
+        localStorage.setItem("local_offline_attendees", JSON.stringify(offlineList));
+        isOfflineUpdated = true;
+      } else {
+        // If it was registered on server but we are working offline / static hosting, insert into offline cache
+        // to override the state locally
+        const mockOfflineAttendee = {
+          ...editingAttendee,
+          name: editName,
+          nip: editNip,
+          instansi: editInstansi,
+          jabatan: editJabatan,
+          jenisKegiatan: editJenisKegiatan,
+          judulKegiatan: editJudulKegiatan
+        };
+        offlineList.push(mockOfflineAttendee);
+        localStorage.setItem("local_offline_attendees", JSON.stringify(offlineList));
+        isOfflineUpdated = true;
+      }
+    } catch (localErr) {
+      console.error("Local storage edit pre-sync failed:", localErr);
+    }
+
     try {
       const res = await fetch(`/api/attendees/${encodeURIComponent(editingAttendee.nip)}`, {
         method: "PUT",
@@ -1303,19 +1341,41 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
         })
       });
 
-      if (!res.ok) {
-        const errData = await res.json();
-        throw new Error(errData.error || "Gagal memperbarui data.");
+      const contentType = res.headers.get("content-type") || "";
+      if (res.ok) {
+        // Successfully updated online
+        dismissToast(toastId);
+        showToast("Data peserta berhasil diperbarui!", "success");
+        setEditingAttendee(null);
+        fetchAttendeesFromSheets();
+      } else {
+        // Server returned non-ok status
+        let errMsg = "Gagal memperbarui data.";
+        if (contentType.includes("application/json")) {
+          const errData = await res.json();
+          errMsg = errData.error || errMsg;
+        } else {
+          errMsg = `HTTP Error ${res.status}: ${res.statusText}`;
+        }
+        throw new Error(errMsg);
       }
-
-      dismissToast(toastId);
-      showToast("Data peserta berhasil diperbarui!", "success");
-      setEditingAttendee(null);
-      fetchAttendeesFromSheets();
     } catch (err: any) {
-      console.error("Error editing attendee:", err);
-      dismissToast(toastId);
-      showToast(`Gagal mengedit data: ${err.message || err}`, "error");
+      console.warn("Server edit request failed/refused. Evaluating offline/local backup status:", err);
+      
+      // Check if this looks like a static Vercel page or a JSON parse error due to HTML redirection
+      const isHtmlResponse = err.message && (err.message.includes("Unexpected token") || err.message.includes("is not valid JSON") || err.message.includes("HTTP Error 404") || err.message.includes("fetch"));
+      const isStaticHostingFallback = isOfflineUpdated && (isHtmlResponse || accessToken === "bypass");
+
+      if (isStaticHostingFallback) {
+        // If we are in bypass or static web environment, the offline fallback is sufficient!
+        dismissToast(toastId);
+        showToast("Data peserta berhasil diperbarui lokal (Penyimpanan Offline)!", "success");
+        setEditingAttendee(null);
+        fetchAttendeesFromSheets();
+      } else {
+        dismissToast(toastId);
+        showToast(`Gagal mengedit data: ${err.message || err}`, "error");
+      }
     } finally {
       setIsSavingEdit(false);
     }

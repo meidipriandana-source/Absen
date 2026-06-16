@@ -811,7 +811,7 @@ app.delete("/api/attendees/:nip", async (req, res) => {
 // Web attendee edit endpoint (updates local database + optional Sheets)
 app.put("/api/attendees/:nip", async (req, res) => {
   const { nip } = req.params;
-  const { name, instansi, jabatan, jenisKegiatan, judulKegiatan, email } = req.body;
+  const { name, nip: newNip, instansi, jabatan, jenisKegiatan, judulKegiatan, email } = req.body;
   const list = loadLocalAttendees();
   const index = list.findIndex(a => a.nip === nip);
   
@@ -820,6 +820,9 @@ app.put("/api/attendees/:nip", async (req, res) => {
   }
 
   list[index].name = name || list[index].name;
+  if (newNip) {
+    list[index].nip = newNip;
+  }
   list[index].instansi = instansi || list[index].instansi;
   list[index].jabatan = jabatan || list[index].jabatan;
   list[index].jenisKegiatan = jenisKegiatan || email || list[index].jenisKegiatan || "-";
@@ -856,7 +859,7 @@ app.put("/api/attendees/:nip", async (req, res) => {
               values: [
                 [
                   list[index].no,
-                  nip,
+                  list[index].nip,
                   list[index].name,
                   list[index].instansi,
                   list[index].jabatan,
