@@ -759,7 +759,7 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
             values: [
               [
                 "No",
-                "NIP",
+                "NIP/NRPTT",
                 "Nama Lengkap",
                 "Instansi",
                 "Jabatan",
@@ -966,7 +966,7 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
         const exportRows = attendees.map((a, index) => ({
           No: index + 1,
           "Nama Lengkap": a.name,
-          NIP: a.nip,
+          "NIP/NRPTT": a.nip,
           "Instansi": a.instansi,
           "Jabatan": a.jabatan,
           "Jenis Kegiatan": a.jenisKegiatan || a.email || "-",
@@ -1138,7 +1138,7 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
 
       autoTable(doc, {
         startY: 42,
-        head: [["No", "Nama Lengkap", "NIP", "Instansi", "Jabatan", "Jenis Kegiatan", "Judul Kegiatan", "Waktu Hadir", "Tanda Tangan"]],
+        head: [["No", "Nama Lengkap", "NIP/NRPTT", "Instansi", "Jabatan", "Jenis Kegiatan", "Judul Kegiatan", "Waktu Hadir", "Tanda Tangan"]],
         body: tableBody,
         theme: "grid",
         headStyles: { fillColor: [5, 150, 105], textColor: 255, fontStyle: "bold", halign: "center" },
@@ -1752,49 +1752,14 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
         </div>
 
         <div className="flex flex-wrap gap-2.5 w-full lg:w-auto items-center">
-          {/* Public session toggle as an elegant Switch */}
-          <div className="flex items-center gap-3 bg-slate-950/40 backdrop-blur-md border border-slate-700/50 rounded-xl px-3.5 py-1.5 hover:bg-slate-900/50 transition-all">
-            <div className="flex flex-col text-left">
-              <span className="text-[9px] uppercase font-bold text-slate-400 tracking-wider">Sesi Absensi HP</span>
-              <span className={`text-[11px] font-bold ${isSessionActive ? "text-emerald-400" : "text-amber-450"}`}>
-                {isSessionActive ? "Terbuka" : "Tertutup"}
-              </span>
-            </div>
-            
-            <button
-              onClick={() => setShowConfirmToggleSession(true)}
-              disabled={isActivatingSession}
-              className={`relative inline-flex h-5.5 w-10 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none disabled:opacity-50 ${
-                isSessionActive ? "bg-emerald-500" : "bg-slate-600"
-              }`}
-              title={isSessionActive ? "Klik untuk menutup sesi absensi secara instan" : "Klik untuk membuka sesi absensi secara instan"}
-            >
-              <span className="sr-only">Toggle Sesi Absensi</span>
-              <span
-                className={`pointer-events-none relative inline-block h-4.5 w-4.5 transform rounded-full bg-white shadow-md transition duration-200 ease-in-out flex items-center justify-center ${
-                  isSessionActive ? "translate-x-4.5" : "translate-x-0"
-                }`}
-              >
-                {isActivatingSession ? (
-                  <RefreshCw className="w-2.5 h-2.5 text-slate-600 animate-spin" />
-                ) : isSessionActive ? (
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                ) : (
-                  <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
-                )}
-              </span>
-            </button>
-          </div>
-
-          {isSessionActive && (
-            <button
-              onClick={() => setShowQrModal(true)}
-              className="bg-slate-950/40 backdrop-blur-md border border-slate-700/50 text-slate-200 hover:bg-slate-900/50 p-2.5 rounded-xl text-xs font-semibold cursor-pointer flex items-center gap-1.5 transition-all"
-              title="Tampilkan Kode QR Sesi Mandiri"
-            >
-              <QrCode className="w-4 h-4 text-emerald-400" /> Tampilkan QR
-            </button>
-          )}
+          {/* QR Code button is always active and accessible */}
+          <button
+            onClick={() => setShowQrModal(true)}
+            className="bg-slate-950/40 backdrop-blur-md border border-slate-700/50 text-slate-200 hover:bg-slate-900/50 p-2.5 rounded-xl text-xs font-semibold cursor-pointer flex items-center gap-1.5 transition-all"
+            title="Tampilkan Kode QR Sesi Mandiri"
+          >
+            <QrCode className="w-4 h-4 text-emerald-400" /> Tampilkan QR
+          </button>
 
           <button
             onClick={handleManualSync}
@@ -3019,7 +2984,7 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
               </div>
               <input
                 type="text"
-                placeholder="Cari nama, instansi, NIP, atau jabatan..."
+                placeholder="Cari nama, instansi, NIP/NRPTT, atau jabatan..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="w-full pl-10 pr-8 py-2 border border-slate-200 bg-slate-50/50 hover:bg-white focus:bg-white rounded-xl text-xs focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 focus:outline-none transition-all duration-200 font-medium text-slate-700 placeholder-slate-400 shadow-sm"
@@ -3207,7 +3172,7 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
                   <tr className="bg-slate-50 border-b border-slate-100 text-[11px] uppercase tracking-wider font-semibold text-slate-500">
                     <th className="py-3 px-4 w-12 text-center">No</th>
                     <th className="py-3 px-4">Nama Lengkap</th>
-                    <th className="py-3 px-4 w-36">NIP</th>
+                    <th className="py-3 px-4 w-36">NIP / NRPTT</th>
                     <th className="py-3 px-4">Instansi</th>
                     <th className="py-3 px-4 text-slate-500">Jabatan</th>
                     <th className="py-3 px-4 text-slate-500">Jenis Kegiatan</th>
@@ -3394,7 +3359,7 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
                       {rankTitle}
                     </span>
                     <h3 className="text-base font-bold truncate leading-tight mt-1">{p.name}</h3>
-                    <p className="text-[11px] text-slate-300 font-mono tracking-wider">{p.nip || "NIP Belum Diisi"}</p>
+                    <p className="text-[11px] text-slate-300 font-mono tracking-wider">{p.nip || "NIP/NRPTT Belum Diisi"}</p>
                   </div>
                 </div>
               </div>
@@ -3412,7 +3377,7 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
                       <span className="text-xs font-bold text-slate-700 block">{p.name || "-"}</span>
                     </div>
                     <div className="space-y-0.5">
-                      <span className="text-[10px] text-slate-400 font-semibold block uppercase">Nomor Induk Pegawai (NIP)</span>
+                      <span className="text-[10px] text-slate-400 font-semibold block uppercase">NIP / NRPTT</span>
                       <span className="text-xs font-bold font-mono text-slate-700 block">{p.nip || "-"}</span>
                     </div>
                     <div className="space-y-0.5">
@@ -3654,7 +3619,7 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
 
               <div>
                 <label className="block text-xs font-semibold text-slate-600 mb-1">
-                  NIP <span className="text-rose-500">*</span>
+                  NIP / NRPTT <span className="text-rose-500">*</span>
                 </label>
                 <input
                   type="text"
@@ -3882,46 +3847,7 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
         </div>
       )}
 
-      {/* Session Toggle Confirmation Modal */}
-      {showConfirmToggleSession && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 flex items-center justify-center p-4 backdrop-blur-xs">
-          <div className="bg-white rounded-2xl max-w-sm w-full p-6 shadow-2xl border border-slate-100 font-sans">
-            <h3 className="text-sm font-bold text-slate-900 mb-2 flex items-center gap-2">
-              <ShieldAlert className="w-5 h-5 text-indigo-600" />
-              Ubah Status Sesi Absensi
-            </h3>
-            <p className="text-xs text-slate-500 leading-relaxed mb-5">
-              Apakah Anda yakin ingin <strong>{isSessionActive ? "MENUTUP" : "MEMBUKA"}</strong> sesi absensi kehadiran digital?<br /><br />
-              {isSessionActive 
-                ? "Menutup sesi akan menghentikan pengisian absensi baru dari perangkat HP/Smartphone peserta secara langsung." 
-                : "Membuka sesi akan mengizinkan pengisian absensi dari perangkat HP/Smartphone peserta secara seketika berdasarkan koordinat lokasi dan QR Code."
-              }
-            </p>
 
-            <div className="flex gap-2.5 justify-end">
-              <button
-                type="button"
-                onClick={() => setShowConfirmToggleSession(false)}
-                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-medium cursor-pointer transition select-none"
-              >
-                Batal
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setShowConfirmToggleSession(false);
-                  handleToggleSession();
-                }}
-                className={`px-4 py-2 text-white rounded-xl text-xs font-bold cursor-pointer transition select-none ${
-                  isSessionActive ? "bg-amber-600 hover:bg-amber-700 shadow-sm shadow-amber-500/20" : "bg-emerald-600 hover:bg-emerald-700 shadow-sm shadow-emerald-500/20"
-                }`}
-              >
-                {isSessionActive ? "Ya, Tutup Sesi" : "Ya, Buka Sesi"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Toast notifications container */}
       <div className="fixed bottom-5 right-5 z-55 flex flex-col gap-3 max-w-sm w-full pointer-events-none">

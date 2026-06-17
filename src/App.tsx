@@ -335,9 +335,6 @@ export default function App() {
               }`}
             >
               Dashboard Admin
-              {isPublicSessionActive && (
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse self-center" title="Sesi publik aktif"></span>
-              )}
             </button>
           </div>
 
@@ -442,7 +439,7 @@ export default function App() {
                 <div className="max-w-2xl mx-auto my-4 bg-white rounded-3xl shadow-xl shadow-slate-100/50 border border-slate-150 overflow-hidden transition-all duration-300">
                   <AttendeeForm 
                     onSuccess={(ticket) => setSuccessTicket(ticket)} 
-                    sessionActive={isPublicSessionActive} 
+                    sessionActive={true} 
                   />
                 </div>
               )}

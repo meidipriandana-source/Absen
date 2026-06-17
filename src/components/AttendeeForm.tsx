@@ -157,7 +157,7 @@ export default function AttendeeForm({ onSuccess, sessionActive }: AttendeeFormP
       return false;
     }
     if (!nip.trim()) {
-      setErrorMessage("NIP wajib diisi.");
+      setErrorMessage("NIP / NRPTT wajib diisi.");
       return false;
     }
     if (!jabatan.trim()) {
@@ -339,21 +339,6 @@ export default function AttendeeForm({ onSuccess, sessionActive }: AttendeeFormP
       setIsSubmitting(false);
     }
   };
-
-  if (!sessionActive) {
-    return (
-      <div className="bg-white rounded-2xl shadow-xl border border-rose-100 p-8 max-w-lg mx-auto text-center">
-        <div className="w-16 h-16 bg-rose-50 text-rose-500 rounded-full flex items-center justify-center mx-auto mb-6">
-          <AlertCircle className="w-8 h-8" />
-        </div>
-        <h3 className="text-xl font-bold text-gray-900 mb-2">Sesi Absensi Belum Aktif</h3>
-        <p className="text-sm text-gray-500 leading-relaxed mb-6">
-          Sesi pengisian absensi mandiri melalui smartphone belum diaktifkan oleh Admin. 
-          Silakan hubungi panitia acara atau minta Admin untuk mengaktifkan sesi publik di dashboard terlebih dahulu.
-        </p>
-      </div>
-    );
-  }
 
   return (
     <div className="w-full">
@@ -629,7 +614,7 @@ export default function AttendeeForm({ onSuccess, sessionActive }: AttendeeFormP
                 {/* NIP */}
                 <div className="col-span-1">
                   <label className="block text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5 select-none">
-                    NIP <span className="text-rose-500">*</span>
+                    NIP / NRPTT <span className="text-rose-500">*</span>
                   </label>
                   <div className="relative">
                     <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
@@ -637,7 +622,7 @@ export default function AttendeeForm({ onSuccess, sessionActive }: AttendeeFormP
                     </div>
                     <input
                       type="text"
-                      placeholder="Contoh: 198203112009031002"
+                      placeholder="Masukkan NIP atau NRPTT Anda"
                       value={nip}
                       onChange={(e) => setNip(e.target.value)}
                       className="w-full pl-10 pr-4 py-2.5 border border-slate-200 rounded-xl text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all bg-white text-slate-800 placeholder-slate-400 font-mono font-medium"
@@ -825,7 +810,7 @@ export default function AttendeeForm({ onSuccess, sessionActive }: AttendeeFormP
                     <span className="col-span-2 font-semibold text-slate-800">{instansi}</span>
                   </div>
                   <div className="grid grid-cols-3 pt-2">
-                    <span className="text-slate-400 font-medium">NIP</span>
+                    <span className="text-slate-400 font-medium">NIP / NRPTT</span>
                     <span className="col-span-2 font-mono font-bold text-slate-800">{nip}</span>
                   </div>
                   <div className="grid grid-cols-3 pt-2">
