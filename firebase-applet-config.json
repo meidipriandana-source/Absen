@@ -3,6 +3,7 @@
   "appId": "1:454474063708:web:984216dfcadaecd690eb99",
   "apiKey": "AIzaSyBKrJVqylU07vqR7uL_LxDQvFRkwP-ndhs",
   "authDomain": "mega-apparatus-ls7sz.firebaseapp.com",
+  "firestoreDatabaseId": "ai-studio-6cd7c2ab-2c43-4fd5-8673-24b0920a757e",
   "storageBucket": "mega-apparatus-ls7sz.firebasestorage.app",
   "messagingSenderId": "454474063708",
   "measurementId": ""

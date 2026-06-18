@@ -5,16 +5,17 @@ import os from "os";
 import { createServer as createViteServer } from "vite";
 import nodemailer from "nodemailer";
 import * as XLSX from "xlsx";
-import { initializeApp } from "firebase/app";
-import { getFirestore, doc, getDoc, getDocs, setDoc, deleteDoc, collection } from "firebase/firestore";
+import { Firestore } from "@google-cloud/firestore";
 
 // Read Firebase configurations
 const firebaseConfigRaw = fs.readFileSync(path.join(process.cwd(), "firebase-applet-config.json"), "utf8");
 const firebaseConfig = JSON.parse(firebaseConfigRaw);
 
-// Initialize Firebase
-const firebaseApp = initializeApp(firebaseConfig);
-const db = getFirestore(firebaseApp);
+// Initialize Firestore using server-side Node.js SDK
+const db = new Firestore({
+  projectId: firebaseConfig.projectId,
+  databaseId: firebaseConfig.firestoreDatabaseId || "(default)"
+});
 
 const app = express();
 const PORT = 3000;
@@ -73,9 +74,9 @@ const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = {
 
 async function loadNotificationSettings(): Promise<NotificationSettings> {
   try {
-    const docRef = doc(db, "settings", "notifications");
-    const docSnap = await getDoc(docRef);
-    if (docSnap.exists()) {
+    const docRef = db.doc("settings/notifications");
+    const docSnap = await docRef.get();
+    if (docSnap.exists) {
       const data = docSnap.data() as NotificationSettings;
       const merged = { ...DEFAULT_NOTIFICATION_SETTINGS, ...data };
       try { fs.writeFileSync(NOTIFICATION_FILE, JSON.stringify(merged, null, 2), "utf-8"); } catch (e) {}
@@ -105,8 +106,7 @@ async function saveNotificationSettings(settings: Partial<NotificationSettings>)
     try { fs.writeFileSync(NOTIFICATION_FILE, JSON.stringify(updated, null, 2), "utf-8"); } catch (e) {}
     
     // Save to Firestore
-    const docRef = doc(db, "settings", "notifications");
-    await setDoc(docRef, updated);
+    await db.doc("settings/notifications").set(updated);
   } catch (err) {
     console.error("[Firestore] saveNotificationSettings failed:", err);
   }
@@ -131,9 +131,9 @@ const DEFAULT_FORM_RULES: FormRules = {
 
 async function loadValidationRules(): Promise<FormRules> {
   try {
-    const docRef = doc(db, "settings", "form_rules");
-    const docSnap = await getDoc(docRef);
-    if (docSnap.exists()) {
+    const docRef = db.doc("settings/form_rules");
+    const docSnap = await docRef.get();
+    if (docSnap.exists) {
       const data = docSnap.data() as FormRules;
       const merged = { 
         requiredFields: { 
@@ -178,8 +178,7 @@ async function saveValidationRules(rules: Partial<FormRules>) {
     try { fs.writeFileSync(FORM_RULES_FILE, JSON.stringify(updated, null, 2), "utf-8"); } catch (e) {}
 
     // Save to Firestore
-    const docRef = doc(db, "settings", "form_rules");
-    await setDoc(docRef, updated);
+    await db.doc("settings/form_rules").set(updated);
   } catch (err) {
     console.error("[Firestore] saveValidationRules failed:", err);
   }
@@ -430,42 +429,15 @@ interface LocalAttendee {
   sheetRowIndex?: number;
 }
 
-// Helper to load local attendees
+// Helper to load local attendees with bidirectional sync and deduplication so nothing is lost
 async function loadLocalAttendees(): Promise<LocalAttendee[]> {
-  try {
-    const collRef = collection(db, "attendees");
-    const snap = await getDocs(collRef);
-    if (!snap.empty) {
-      const dbAttendees: LocalAttendee[] = [];
-      snap.forEach((docSnap) => {
-        const item = docSnap.data() as LocalAttendee;
-        if (item.jenisKegiatan === undefined) {
-          item.jenisKegiatan = item.email || "-";
-        }
-        if (item.judulKegiatan === undefined) {
-          item.judulKegiatan = "-";
-        }
-        dbAttendees.push(item);
-      });
-      // Sort ascending to retain correct order based on record sequence
-      dbAttendees.sort((a, b) => (a.no || 0) - (b.no || 0));
-      
-      // Cache copy locally
-      try {
-        fs.writeFileSync(ATTENDEES_FILE, JSON.stringify(dbAttendees, null, 2), "utf-8");
-      } catch (e) {}
-
-      return dbAttendees;
-    }
-  } catch (err) {
-    console.error("[Firestore] loadLocalAttendees failed, falling back to disk cache:", err);
-  }
-
+  // 1. Read from local disk file
+  let localList: LocalAttendee[] = [];
   try {
     if (fs.existsSync(ATTENDEES_FILE)) {
       const data = fs.readFileSync(ATTENDEES_FILE, "utf-8");
       const list = JSON.parse(data) as any[];
-      return list.map(a => {
+      localList = list.map(a => {
         if (a.jenisKegiatan === undefined) {
           a.jenisKegiatan = a.email || "-";
         }
@@ -478,36 +450,106 @@ async function loadLocalAttendees(): Promise<LocalAttendee[]> {
   } catch (err) {
     console.error("Error reading local attendees file:", err);
   }
-  return [];
+
+  // 2. Read from Firestore
+  let firestoreList: LocalAttendee[] = [];
+  try {
+    const snap = await db.collection("attendees").get();
+    if (!snap.empty) {
+      snap.forEach((docSnap) => {
+        const item = docSnap.data() as LocalAttendee;
+        if (item.jenisKegiatan === undefined) {
+          item.jenisKegiatan = item.email || "-";
+        }
+        if (item.judulKegiatan === undefined) {
+          item.judulKegiatan = "-";
+        }
+        firestoreList.push(item);
+      });
+    }
+  } catch (err) {
+    console.error("[Firestore] loadLocalAttendees fetch collection failed, reading only from disk cache:", err);
+  }
+
+  // 3. Bidirectional Reconciliation/Merge to ensure neither local nor remote is lost
+  const map = new Map<string, LocalAttendee>();
+
+  // A: Map remote first
+  firestoreList.forEach(item => {
+    const key = `${(item.nip || "").trim().toLowerCase()}_${(item.name || "").trim().toLowerCase()}`;
+    map.set(key, item);
+  });
+
+  // B: Merge local second (preserving newer signatures or offline registrations)
+  localList.forEach(item => {
+    const key = `${(item.nip || "").trim().toLowerCase()}_${(item.name || "").trim().toLowerCase()}`;
+    const existing = map.get(key);
+    if (!existing) {
+      map.set(key, item);
+    } else {
+      // Merge with precedence to keep the more complete entity
+      const merged = { ...existing, ...item };
+      // Preserve signatures and sheet indexes
+      if (!merged.signature && (existing.signature || item.signature)) {
+        merged.signature = existing.signature || item.signature;
+      }
+      if (!merged.sheetRowIndex && (existing.sheetRowIndex || item.sheetRowIndex)) {
+        merged.sheetRowIndex = existing.sheetRowIndex || item.sheetRowIndex;
+      }
+      map.set(key, merged);
+    }
+  });
+
+  const mergedList = Array.from(map.values());
+  // Sort ascending by enrollment number ('no')
+  mergedList.sort((a, b) => (a.no || 0) - (b.no || 0));
+
+  // Fix indices ('no')
+  mergedList.forEach((item, index) => {
+    item.no = index + 1;
+  });
+
+  // 4. Save merged copy to local disk to keep cached stats up-to-date
+  try {
+    fs.writeFileSync(ATTENDEES_FILE, JSON.stringify(mergedList, null, 2), "utf-8");
+  } catch (e) {
+    console.error("Error writing reconciled attendees.json cache:", e);
+  }
+
+  return mergedList;
 }
 
-// Helper to save local attendees
+// Helper to save local attendees with instant disk durability and asynchronous Firestore sync
 async function saveLocalAttendees(list: LocalAttendee[]) {
+  // 1. Instantly save to disk so it's durable and safe
   try {
     fs.writeFileSync(ATTENDEES_FILE, JSON.stringify(list, null, 2), "utf-8");
   } catch (err) {
     console.error("Error writing local attendees file:", err);
   }
 
-  try {
-    // Synchronize to Firestore
-    for (const a of list) {
-      const docId = encodeURIComponent(`${(a.nip || "").trim()}_${(a.name || "").trim()}`.replace(/[\/.]/g, "_"));
-      const docRef = doc(db, "attendees", docId);
-      await setDoc(docRef, a);
+  // 2. Schedule Firestore sync in-background/asynchronously to make the HTTP api ultra fast and robust
+  setTimeout(async () => {
+    try {
+      const promises = list.map(async (a) => {
+        const docId = encodeURIComponent(`${(a.nip || "").trim()}_${(a.name || "").trim()}`.replace(/[\/.]/g, "_"));
+        const docRef = db.doc(`attendees/${docId}`);
+        return docRef.set(a);
+      });
+      await Promise.all(promises);
+      console.log(`[Firestore Background Sync] Successfully synchronized ${list.length} attendees.`);
+    } catch (err) {
+      console.error("[Firestore Background Sync] Failed to sync attendees to Firestore:", err);
     }
-    console.log(`[Firestore] Saved ${list.length} attendees.`);
-  } catch (err) {
-    console.error("[Firestore] saveLocalAttendees failed:", err);
-  }
+  }, 10);
 }
 
 // Helper to load admin session from file
 async function loadSession(): Promise<AdminSession | null> {
   try {
-    const docRef = doc(db, "settings", "sessions");
-    const docSnap = await getDoc(docRef);
-    if (docSnap.exists()) {
+    const docRef = db.doc("settings/sessions");
+    const docSnap = await docRef.get();
+    if (docSnap.exists) {
       const data = docSnap.data() as AdminSession;
       const expiry = data.accessToken ? 3 * 3600 * 1000 : 24 * 3600 * 1000;
       if (Date.now() - data.savedAt < expiry) {
@@ -551,8 +593,8 @@ async function saveSession(accessToken: string | null, spreadsheetId?: string, d
     try { fs.writeFileSync(SESSION_FILE, JSON.stringify(session, null, 2), "utf-8"); } catch (e) {}
     
     // Save to Firestore
-    const docRef = doc(db, "settings", "sessions");
-    await setDoc(docRef, session);
+    const docRef = db.doc("settings/sessions");
+    await docRef.set(session);
     console.log("[Firestore] Save session success:", session);
   } catch (err) {
     console.error("[Firestore] saveSession error:", err);
@@ -562,8 +604,8 @@ async function saveSession(accessToken: string | null, spreadsheetId?: string, d
 // Helper to delete admin session
 async function clearSession() {
   try {
-    const docRef = doc(db, "settings", "sessions");
-    await deleteDoc(docRef);
+    const docRef = db.doc("settings/sessions");
+    await docRef.delete();
   } catch (e) {}
 
   try {
@@ -1004,8 +1046,8 @@ app.delete("/api/attendees/:nip", async (req, res) => {
   // Clean Firestore individual doc to keep database tidy
   try {
     const docId = encodeURIComponent(`${(removed.nip || "").trim()}_${(removed.name || "").trim()}`.replace(/[\/.]/g, "_"));
-    const docRef = doc(db, "attendees", docId);
-    await deleteDoc(docRef);
+    const docRef = db.doc(`attendees/${docId}`);
+    await docRef.delete();
   } catch (err) {
     console.error(`[Firestore] Failed to delete attendee doc on delete:`, err);
   }
@@ -1136,10 +1178,9 @@ app.post("/api/clear-all", async (req, res) => {
   
   // Clear Firestore attendees collection as well
   try {
-    const collRef = collection(db, "attendees");
-    const snapshot = await getDocs(collRef);
+    const snapshot = await db.collection("attendees").get();
     for (const d of snapshot.docs) {
-      await deleteDoc(d.ref);
+      await d.ref.delete();
     }
     console.log("[Firestore] Cleared attendees collection on clear-all");
   } catch (err) {
@@ -1482,9 +1523,9 @@ const BACKUP_HISTORY_FILE = getWritablePath("backup_history.json");
 
 async function loadBackupHistory(): Promise<BackupHistoryInfo> {
   try {
-    const docRef = doc(db, "settings", "backup_history");
-    const docSnap = await getDoc(docRef);
-    if (docSnap.exists()) {
+    const docRef = db.doc("settings/backup_history");
+    const docSnap = await docRef.get();
+    if (docSnap.exists) {
       const data = docSnap.data() as BackupHistoryInfo;
       try {
         fs.writeFileSync(BACKUP_HISTORY_FILE, JSON.stringify(data, null, 2), "utf-8");
@@ -1514,8 +1555,7 @@ async function saveBackupHistory(info: BackupHistoryInfo) {
   }
 
   try {
-    const docRef = doc(db, "settings", "backup_history");
-    await setDoc(docRef, info);
+    await db.doc("settings/backup_history").set(info);
   } catch (err) {
     console.error("[Firestore] saveBackupHistory failed:", err);
   }

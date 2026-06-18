@@ -1,0 +1,59 @@
+{
+  "entities": {
+    "Attendee": {
+      "title": "Attendee",
+      "description": "An attendee registration record.",
+      "type": "object",
+      "properties": {
+        "no": { "type": "number", "description": "Enrollment sequential number" },
+        "name": { "type": "string", "description": "Full name of the attendee" },
+        "nip": { "type": "string", "description": "NIP or NRPTT number" },
+        "instansi": { "type": "string", "description": "Institution name" },
+        "jabatan": { "type": "string", "description": "Position or role" },
+        "jenisKegiatan": { "type": "string", "description": "Activity type" },
+        "judulKegiatan": { "type": "string", "description": "Activity title" },
+        "checkInTime": { "type": "string", "description": "Check-in ISO timestamp" },
+        "signature": { "type": "string", "description": "Base64 or URL signature image" }
+      },
+      "required": ["name", "nip"]
+    },
+    "Setting": {
+      "title": "Setting",
+      "description": "Generic document representing system settings (such as notification_settings, form_rules, sessions, backup_history).",
+      "type": "object",
+      "properties": {
+        "telegramEnabled": { "type": "boolean" },
+        "telegramToken": { "type": "string" },
+        "telegramChatId": { "type": "string" },
+        "whatsappEnabled": { "type": "boolean" },
+        "whatsappTarget": { "type": "string" },
+        "emailEnabled": { "type": "boolean" },
+        "emailRecipient": { "type": "string" },
+        "smtpHost": { "type": "string" },
+        "smtpPort": { "type": "number" },
+        "smtpUser": { "type": "string" },
+        "smtpPass": { "type": "string" },
+        "allowPublicAccess": { "type": "boolean" },
+        "requireNip": { "type": "boolean" },
+        "requireJabatan": { "type": "boolean" },
+        "requireSign": { "type": "boolean" },
+        "enableFormRules": { "type": "boolean" },
+        "accessToken": { "type": "string" },
+        "spreadsheetId": { "type": "string" },
+        "driveFolderId": { "type": "string" },
+        "lastSuccess": { "type": "string" },
+        "logs": { "type": "array" }
+      }
+    }
+  },
+  "firestore": {
+    "attendees/{attendeeId}": {
+      "schema": "Attendee",
+      "description": "Collection of attendee records registered via web form, with bi-directional spreadsheet sync"
+    },
+    "settings/{settingId}": {
+      "schema": "Setting",
+      "description": "System settings and metadata stored in Firestore. Key documents include notifications, form_rules, sessions, and backup_history"
+    }
+  }
+}
