@@ -11,7 +11,7 @@ import { Firestore } from "@google-cloud/firestore";
 const firebaseConfigRaw = fs.readFileSync(path.join(process.cwd(), "firebase-applet-config.json"), "utf8");
 const firebaseConfig = JSON.parse(firebaseConfigRaw);
 
-// Initialize Firestore using server-side Node.js SDK
+// Initialize Firestore using the server-side Admin SDK which has administrative privileges
 const db = new Firestore({
   projectId: firebaseConfig.projectId,
   databaseId: firebaseConfig.firestoreDatabaseId || "(default)"
