@@ -5,6 +5,16 @@ import os from "os";
 import { createServer as createViteServer } from "vite";
 import nodemailer from "nodemailer";
 import * as XLSX from "xlsx";
+import { initializeApp } from "firebase/app";
+import { getFirestore, doc, getDoc, getDocs, setDoc, deleteDoc, collection } from "firebase/firestore";
+
+// Read Firebase configurations
+const firebaseConfigRaw = fs.readFileSync(path.join(process.cwd(), "firebase-applet-config.json"), "utf8");
+const firebaseConfig = JSON.parse(firebaseConfigRaw);
+
+// Initialize Firebase
+const firebaseApp = initializeApp(firebaseConfig);
+const db = getFirestore(firebaseApp);
 
 const app = express();
 const PORT = 3000;
@@ -61,7 +71,20 @@ const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = {
   emailRecipient: "",
 };
 
-function loadNotificationSettings(): NotificationSettings {
+async function loadNotificationSettings(): Promise<NotificationSettings> {
+  try {
+    const docRef = doc(db, "settings", "notifications");
+    const docSnap = await getDoc(docRef);
+    if (docSnap.exists()) {
+      const data = docSnap.data() as NotificationSettings;
+      const merged = { ...DEFAULT_NOTIFICATION_SETTINGS, ...data };
+      try { fs.writeFileSync(NOTIFICATION_FILE, JSON.stringify(merged, null, 2), "utf-8"); } catch (e) {}
+      return merged;
+    }
+  } catch (err) {
+    console.error("[Firestore] loadNotificationSettings failed, falling back to disk cache:", err);
+  }
+
   try {
     if (fs.existsSync(NOTIFICATION_FILE)) {
       const data = fs.readFileSync(NOTIFICATION_FILE, "utf-8");
@@ -73,13 +96,19 @@ function loadNotificationSettings(): NotificationSettings {
   return DEFAULT_NOTIFICATION_SETTINGS;
 }
 
-function saveNotificationSettings(settings: Partial<NotificationSettings>) {
+async function saveNotificationSettings(settings: Partial<NotificationSettings>) {
   try {
-    const existing = loadNotificationSettings();
+    const existing = await loadNotificationSettings();
     const updated = { ...existing, ...settings };
-    fs.writeFileSync(NOTIFICATION_FILE, JSON.stringify(updated, null, 2), "utf-8");
+    
+    // Local save
+    try { fs.writeFileSync(NOTIFICATION_FILE, JSON.stringify(updated, null, 2), "utf-8"); } catch (e) {}
+    
+    // Save to Firestore
+    const docRef = doc(db, "settings", "notifications");
+    await setDoc(docRef, updated);
   } catch (err) {
-    console.error("Error writing notification settings file:", err);
+    console.error("[Firestore] saveNotificationSettings failed:", err);
   }
 }
 
@@ -100,7 +129,25 @@ const DEFAULT_FORM_RULES: FormRules = {
   }
 };
 
-function loadValidationRules(): FormRules {
+async function loadValidationRules(): Promise<FormRules> {
+  try {
+    const docRef = doc(db, "settings", "form_rules");
+    const docSnap = await getDoc(docRef);
+    if (docSnap.exists()) {
+      const data = docSnap.data() as FormRules;
+      const merged = { 
+        requiredFields: { 
+          ...DEFAULT_FORM_RULES.requiredFields, 
+          ...data.requiredFields 
+        } 
+      };
+      try { fs.writeFileSync(FORM_RULES_FILE, JSON.stringify(merged, null, 2), "utf-8"); } catch (e) {}
+      return merged;
+    }
+  } catch (err) {
+    console.error("[Firestore] loadValidationRules failed, falling back to disk cache:", err);
+  }
+
   try {
     if (fs.existsSync(FORM_RULES_FILE)) {
       const data = fs.readFileSync(FORM_RULES_FILE, "utf-8");
@@ -117,18 +164,24 @@ function loadValidationRules(): FormRules {
   return DEFAULT_FORM_RULES;
 }
 
-function saveValidationRules(rules: Partial<FormRules>) {
+async function saveValidationRules(rules: Partial<FormRules>) {
   try {
-    const existing = loadValidationRules();
+    const existing = await loadValidationRules();
     const updated = { 
       requiredFields: { 
         ...existing.requiredFields, 
         ...(rules.requiredFields || {}) 
       } 
     };
-    fs.writeFileSync(FORM_RULES_FILE, JSON.stringify(updated, null, 2), "utf-8");
+
+    // Save locally
+    try { fs.writeFileSync(FORM_RULES_FILE, JSON.stringify(updated, null, 2), "utf-8"); } catch (e) {}
+
+    // Save to Firestore
+    const docRef = doc(db, "settings", "form_rules");
+    await setDoc(docRef, updated);
   } catch (err) {
-    console.error("Error writing form validation rules file:", err);
+    console.error("[Firestore] saveValidationRules failed:", err);
   }
 }
 
@@ -231,8 +284,8 @@ async function sendEmailNotification(settings: NotificationSettings, text: strin
 }
 
 async function triggerAutoNotification() {
-  const settings = loadNotificationSettings();
-  const list = loadLocalAttendees();
+  const settings = await loadNotificationSettings();
+  const list = await loadLocalAttendees();
   
   if (list.length === 0) {
     console.log("[Notification] No attendees registered. Skipping daily summary notification.");
@@ -378,7 +431,36 @@ interface LocalAttendee {
 }
 
 // Helper to load local attendees
-function loadLocalAttendees(): LocalAttendee[] {
+async function loadLocalAttendees(): Promise<LocalAttendee[]> {
+  try {
+    const collRef = collection(db, "attendees");
+    const snap = await getDocs(collRef);
+    if (!snap.empty) {
+      const dbAttendees: LocalAttendee[] = [];
+      snap.forEach((docSnap) => {
+        const item = docSnap.data() as LocalAttendee;
+        if (item.jenisKegiatan === undefined) {
+          item.jenisKegiatan = item.email || "-";
+        }
+        if (item.judulKegiatan === undefined) {
+          item.judulKegiatan = "-";
+        }
+        dbAttendees.push(item);
+      });
+      // Sort ascending to retain correct order based on record sequence
+      dbAttendees.sort((a, b) => (a.no || 0) - (b.no || 0));
+      
+      // Cache copy locally
+      try {
+        fs.writeFileSync(ATTENDEES_FILE, JSON.stringify(dbAttendees, null, 2), "utf-8");
+      } catch (e) {}
+
+      return dbAttendees;
+    }
+  } catch (err) {
+    console.error("[Firestore] loadLocalAttendees failed, falling back to disk cache:", err);
+  }
+
   try {
     if (fs.existsSync(ATTENDEES_FILE)) {
       const data = fs.readFileSync(ATTENDEES_FILE, "utf-8");
@@ -400,21 +482,48 @@ function loadLocalAttendees(): LocalAttendee[] {
 }
 
 // Helper to save local attendees
-function saveLocalAttendees(list: LocalAttendee[]) {
+async function saveLocalAttendees(list: LocalAttendee[]) {
   try {
     fs.writeFileSync(ATTENDEES_FILE, JSON.stringify(list, null, 2), "utf-8");
   } catch (err) {
     console.error("Error writing local attendees file:", err);
   }
+
+  try {
+    // Synchronize to Firestore
+    for (const a of list) {
+      const docId = encodeURIComponent(`${(a.nip || "").trim()}_${(a.name || "").trim()}`.replace(/[\/.]/g, "_"));
+      const docRef = doc(db, "attendees", docId);
+      await setDoc(docRef, a);
+    }
+    console.log(`[Firestore] Saved ${list.length} attendees.`);
+  } catch (err) {
+    console.error("[Firestore] saveLocalAttendees failed:", err);
+  }
 }
 
 // Helper to load admin session from file
-function loadSession(): AdminSession | null {
+async function loadSession(): Promise<AdminSession | null> {
+  try {
+    const docRef = doc(db, "settings", "sessions");
+    const docSnap = await getDoc(docRef);
+    if (docSnap.exists()) {
+      const data = docSnap.data() as AdminSession;
+      const expiry = data.accessToken ? 3 * 3600 * 1000 : 24 * 3600 * 1000;
+      if (Date.now() - data.savedAt < expiry) {
+        // Cache to local file
+        try { fs.writeFileSync(SESSION_FILE, JSON.stringify(data, null, 2), "utf-8"); } catch (e) {}
+        return data;
+      }
+    }
+  } catch (err) {
+    console.error("[Firestore] loadSession failed, falling back to disk cache:", err);
+  }
+
   try {
     if (fs.existsSync(SESSION_FILE)) {
       const data = fs.readFileSync(SESSION_FILE, "utf-8");
       const parsed = JSON.parse(data);
-      // Local session timeout is larger (24h) than Google auth tokens to prevent random kickouts
       const expiry = parsed.accessToken ? 3 * 3600 * 1000 : 24 * 3600 * 1000;
       if (Date.now() - parsed.savedAt < expiry) {
         return parsed;
@@ -427,9 +536,9 @@ function loadSession(): AdminSession | null {
 }
 
 // Helper to save admin session to file
-function saveSession(accessToken: string | null, spreadsheetId?: string, driveFolderId?: string, isSessionActive?: boolean) {
+async function saveSession(accessToken: string | null, spreadsheetId?: string, driveFolderId?: string, isSessionActive?: boolean) {
   try {
-    const existing = loadSession();
+    const existing = await loadSession();
     const session: AdminSession = {
       accessToken: accessToken !== undefined ? accessToken : (existing ? existing.accessToken : null),
       savedAt: Date.now(),
@@ -437,15 +546,26 @@ function saveSession(accessToken: string | null, spreadsheetId?: string, driveFo
       driveFolderId: driveFolderId || (existing ? existing.driveFolderId : undefined),
       isSessionActive: isSessionActive !== undefined ? isSessionActive : (existing ? existing.isSessionActive : false)
     };
-    fs.writeFileSync(SESSION_FILE, JSON.stringify(session, null, 2), "utf-8");
-    console.log("Admin session saved to file:", session);
+    
+    // Save locally
+    try { fs.writeFileSync(SESSION_FILE, JSON.stringify(session, null, 2), "utf-8"); } catch (e) {}
+    
+    // Save to Firestore
+    const docRef = doc(db, "settings", "sessions");
+    await setDoc(docRef, session);
+    console.log("[Firestore] Save session success:", session);
   } catch (err) {
-    console.error("Error writing admin session file:", err);
+    console.error("[Firestore] saveSession error:", err);
   }
 }
 
 // Helper to delete admin session
-function clearSession() {
+async function clearSession() {
+  try {
+    const docRef = doc(db, "settings", "sessions");
+    await deleteDoc(docRef);
+  } catch (e) {}
+
   try {
     if (fs.existsSync(SESSION_FILE)) {
       fs.unlinkSync(SESSION_FILE);
@@ -493,7 +613,7 @@ async function checkSpreadsheetConnection(token: string, spreadsheetId: string):
 
 // Get session status (checks if check-in mode is active)
 app.get("/api/session-status", async (req, res) => {
-  const session = loadSession();
+  const session = await loadSession();
   
   // Track active admin administrators
   const adminClientId = req.query.adminClientId as string;
@@ -559,13 +679,13 @@ app.get("/api/session-status", async (req, res) => {
 });
 
 // Admin saves token/settings for public check-ins
-app.post("/api/save-token", (req, res) => {
+app.post("/api/save-token", async (req, res) => {
   const { accessToken, spreadsheetId, driveFolderId, isSessionActive } = req.body;
-  const current = loadSession();
+  const current = await loadSession();
   const wasActive = current ? !!current.isSessionActive : false;
   const nextActive = isSessionActive !== undefined ? !!isSessionActive : (current ? !!current.isSessionActive : true);
   
-  saveSession(
+  await saveSession(
     accessToken !== undefined ? accessToken : (current ? current.accessToken : null),
     spreadsheetId || (current ? current.spreadsheetId : undefined),
     driveFolderId || (current ? current.driveFolderId : undefined),
@@ -580,7 +700,7 @@ app.post("/api/save-token", (req, res) => {
 });
 
 // Admin logs in via local Username & Password fallback bypass
-app.post("/api/admin/local-login", (req, res) => {
+app.post("/api/admin/local-login", async (req, res) => {
   const { username, password } = req.body;
   
   const userText = (username || "").trim().toLowerCase();
@@ -592,12 +712,12 @@ app.post("/api/admin/local-login", (req, res) => {
 
   // Accept user "admin" with valid passwords
   if (userText === "admin" && (passText === "admin" || passText === "admin123" || passText === "absenkita2026")) {
-    const current = loadSession() || {
+    const current = await loadSession() || {
       accessToken: null,
       savedAt: Date.now(),
       isSessionActive: false
     };
-    saveSession(
+    await saveSession(
       current.accessToken,
       current.spreadsheetId,
       current.driveFolderId,
@@ -606,7 +726,7 @@ app.post("/api/admin/local-login", (req, res) => {
     return res.json({ 
       success: true, 
       message: "Login admin lokal sukses.",
-      session: loadSession()
+      session: await loadSession()
     });
   } else {
     return res.status(401).json({ error: "Username atau Password salah. Gunakan Username: admin, Password: admin123" });
@@ -614,14 +734,14 @@ app.post("/api/admin/local-login", (req, res) => {
 });
 
 // Admin clears token
-app.post("/api/clear-token", (req, res) => {
-  const current = loadSession();
+app.post("/api/clear-token", async (req, res) => {
+  const current = await loadSession();
   const wasActive = current ? !!current.isSessionActive : false;
   if (current) {
     // Keep credentials, just deactivate active public check-in mode.
-    saveSession(current.accessToken, current.spreadsheetId, current.driveFolderId, false);
+    await saveSession(current.accessToken, current.spreadsheetId, current.driveFolderId, false);
   } else {
-    clearSession();
+    await clearSession();
   }
 
   if (wasActive) {
@@ -632,26 +752,26 @@ app.post("/api/clear-token", (req, res) => {
 });
 
 // Get notification configuration
-app.get("/api/notifications/config", (req, res) => {
-  const current = loadNotificationSettings();
+app.get("/api/notifications/config", async (req, res) => {
+  const current = await loadNotificationSettings();
   res.json(current);
 });
 
 // Save notification configuration
-app.post("/api/notifications/config", (req, res) => {
-  saveNotificationSettings(req.body);
+app.post("/api/notifications/config", async (req, res) => {
+  await saveNotificationSettings(req.body);
   res.json({ success: true, message: "Pengaturan notifikasi berhasil disimpan." });
 });
 
 // Get form validation rules configuration
-app.get("/api/form-rules/config", (req, res) => {
-  const current = loadValidationRules();
+app.get("/api/form-rules/config", async (req, res) => {
+  const current = await loadValidationRules();
   res.json(current);
 });
 
 // Save form validation rules configuration
-app.post("/api/form-rules/config", (req, res) => {
-  saveValidationRules(req.body);
+app.post("/api/form-rules/config", async (req, res) => {
+  await saveValidationRules(req.body);
   res.json({ success: true, message: "Pengaturan validasi berhasil disimpan." });
 });
 
@@ -791,7 +911,7 @@ async function pullAttendeesFromSheets(session: AdminSession): Promise<boolean> 
       });
     });
 
-    const list = loadLocalAttendees();
+    const list = await loadLocalAttendees();
     const localMap = new Map<string, LocalAttendee>();
     list.forEach(a => {
       const key = `${(a.nip || "").trim().toLowerCase()}_${(a.name || "").trim().toLowerCase()}`;
@@ -818,7 +938,7 @@ async function pullAttendeesFromSheets(session: AdminSession): Promise<boolean> 
     });
 
     if (modified) {
-      saveLocalAttendees(list);
+      await saveLocalAttendees(list);
     }
     return true;
   } catch (error) {
@@ -832,7 +952,7 @@ let lastSheetsSyncTime = 0;
 // Get all attendees (stripped of huge base64 signatures to be ultra-fast)
 app.get("/api/attendees", async (req, res) => {
   const force = req.query.force === "true" || req.query.sync === "true";
-  const session = loadSession();
+  const session = await loadSession();
   const now = Date.now();
   if (session && session.accessToken && session.spreadsheetId) {
     if (force || now - lastSheetsSyncTime > 15000) {
@@ -842,15 +962,15 @@ app.get("/api/attendees", async (req, res) => {
     }
   }
 
-  const list = loadLocalAttendees();
+  const list = await loadLocalAttendees();
   const stripped = list.map(({ signature, ...rest }) => rest);
   res.json(stripped);
 });
 
 // Fetch base64 signature as local PNG file bypassing Google Drive CORS
-app.get("/api/signatures/:nip", (req, res) => {
+app.get("/api/signatures/:nip", async (req, res) => {
   const { nip } = req.params;
-  const list = loadLocalAttendees();
+  const list = await loadLocalAttendees();
   const found = list.find(a => a.nip === nip);
   if (!found || !found.signature) {
     return res.status(404).send("Signature not found");
@@ -871,7 +991,7 @@ app.get("/api/signatures/:nip", (req, res) => {
 // Web attendee deletion endpoint (updates local database + optional Sheets)
 app.delete("/api/attendees/:nip", async (req, res) => {
   const { nip } = req.params;
-  const list = loadLocalAttendees();
+  const list = await loadLocalAttendees();
   const index = list.findIndex(a => a.nip === nip);
   
   if (index === -1) {
@@ -879,10 +999,19 @@ app.delete("/api/attendees/:nip", async (req, res) => {
   }
 
   const removed = list.splice(index, 1)[0];
-  saveLocalAttendees(list);
+  await saveLocalAttendees(list);
+
+  // Clean Firestore individual doc to keep database tidy
+  try {
+    const docId = encodeURIComponent(`${(removed.nip || "").trim()}_${(removed.name || "").trim()}`.replace(/[\/.]/g, "_"));
+    const docRef = doc(db, "attendees", docId);
+    await deleteDoc(docRef);
+  } catch (err) {
+    console.error(`[Firestore] Failed to delete attendee doc on delete:`, err);
+  }
 
   // Best-effort delete from Google Sheets if admin has loaded credentials
-  const session = loadSession();
+  const session = await loadSession();
   if (session && session.accessToken && removed.sheetRowIndex) {
     try {
       const token = session.accessToken;
@@ -931,7 +1060,7 @@ app.delete("/api/attendees/:nip", async (req, res) => {
 app.put("/api/attendees/:nip", async (req, res) => {
   const { nip } = req.params;
   const { name, nip: newNip, instansi, jabatan, jenisKegiatan, judulKegiatan, email } = req.body;
-  const list = loadLocalAttendees();
+  const list = await loadLocalAttendees();
   const index = list.findIndex(a => a.nip === nip);
   
   if (index === -1) {
@@ -947,10 +1076,10 @@ app.put("/api/attendees/:nip", async (req, res) => {
   list[index].jenisKegiatan = jenisKegiatan || email || list[index].jenisKegiatan || "-";
   list[index].judulKegiatan = judulKegiatan || list[index].judulKegiatan || "-";
 
-  saveLocalAttendees(list);
+  await saveLocalAttendees(list);
 
   // Best-effort edit update on Google Sheets
-  const session = loadSession();
+  const session = await loadSession();
   if (session && session.accessToken && list[index].sheetRowIndex) {
     try {
       const token = session.accessToken;
@@ -1002,14 +1131,28 @@ app.put("/api/attendees/:nip", async (req, res) => {
 });
 
 // Admin clears all attendees
-app.post("/api/clear-all", (req, res) => {
-  saveLocalAttendees([]);
+app.post("/api/clear-all", async (req, res) => {
+  await saveLocalAttendees([]);
+  
+  // Clear Firestore attendees collection as well
+  try {
+    const collRef = collection(db, "attendees");
+    const snapshot = await getDocs(collRef);
+    for (const d of snapshot.docs) {
+      await deleteDoc(d.ref);
+    }
+    console.log("[Firestore] Cleared attendees collection on clear-all");
+  } catch (err) {
+    console.error("[Firestore] Clear collection failed:", err);
+  }
+
   res.json({ success: true, message: "Seluruh data lokal berhasil dikosongkan." });
 });
 
 // Public Submit Attendance
 app.post("/api/submit-attendance", async (req, res) => {
-  const session = loadSession() || { accessToken: null, spreadsheetId: undefined, driveFolderId: undefined };
+  const sessionDoc = await loadSession();
+  const session = sessionDoc || { accessToken: null, spreadsheetId: undefined, driveFolderId: undefined };
 
   const { name, instansi, nip, jabatan, jenisKegiatan, judulKegiatan, email, signature } = req.body;
 
@@ -1021,7 +1164,7 @@ app.post("/api/submit-attendance", async (req, res) => {
   const resolvedJudulKegiatan = judulKegiatan || "-";
 
   try {
-    const list = loadLocalAttendees();
+    const list = await loadLocalAttendees();
     
     // Check duplication based on both NIP and Name to allow multiple dummy/unfilled NIP submissions with different names
     const alreadyRegistered = list.some(
@@ -1092,11 +1235,11 @@ app.post("/api/submit-attendance", async (req, res) => {
     }
 
     list.push(newAttendee);
-    saveLocalAttendees(list);
+    await saveLocalAttendees(list);
 
     // Background Automatic Daily Backup check on new sign-in
     try {
-      const historyInfo = loadBackupHistory();
+      const historyInfo = await loadBackupHistory();
       const nowStr = new Date().toISOString().split("T")[0]; // YYYY-MM-DD
       if (historyInfo.lastBackupDate !== nowStr) {
         performGoogleDriveBackup(false).catch(e => console.error("[Auto Daily Backup on check-in] Failed:", e));
@@ -1285,7 +1428,7 @@ app.get("/api/proxy-signature", async (req, res) => {
     // Resolve Authorization token (try request headers, and fallback to server session)
     let authHeader = req.headers.authorization;
     if (!authHeader) {
-      const session = loadSession();
+      const session = await loadSession();
       if (session && session.accessToken) {
         authHeader = `Bearer ${session.accessToken}`;
       }
@@ -1337,7 +1480,21 @@ export interface BackupHistoryInfo {
 
 const BACKUP_HISTORY_FILE = getWritablePath("backup_history.json");
 
-function loadBackupHistory(): BackupHistoryInfo {
+async function loadBackupHistory(): Promise<BackupHistoryInfo> {
+  try {
+    const docRef = doc(db, "settings", "backup_history");
+    const docSnap = await getDoc(docRef);
+    if (docSnap.exists()) {
+      const data = docSnap.data() as BackupHistoryInfo;
+      try {
+        fs.writeFileSync(BACKUP_HISTORY_FILE, JSON.stringify(data, null, 2), "utf-8");
+      } catch (e) {}
+      return data;
+    }
+  } catch (err) {
+    console.error("[Firestore] loadBackupHistory failed, falling back to disk cache:", err);
+  }
+
   try {
     if (fs.existsSync(BACKUP_HISTORY_FILE)) {
       const data = fs.readFileSync(BACKUP_HISTORY_FILE, "utf-8");
@@ -1349,11 +1506,18 @@ function loadBackupHistory(): BackupHistoryInfo {
   return { lastBackupDate: null, lastBackupTime: null, history: [] };
 }
 
-function saveBackupHistory(info: BackupHistoryInfo) {
+async function saveBackupHistory(info: BackupHistoryInfo) {
   try {
     fs.writeFileSync(BACKUP_HISTORY_FILE, JSON.stringify(info, null, 2), "utf-8");
   } catch (err) {
     console.error("Error writing backup history file:", err);
+  }
+
+  try {
+    const docRef = doc(db, "settings", "backup_history");
+    await setDoc(docRef, info);
+  } catch (err) {
+    console.error("[Firestore] saveBackupHistory failed:", err);
   }
 }
 
@@ -1391,8 +1555,8 @@ function generateExcelBuffer(attendees: LocalAttendee[]): Buffer {
 }
 
 async function performGoogleDriveBackup(isManual = false): Promise<BackupLog> {
-  const session = loadSession();
-  const attendees = loadLocalAttendees();
+  const session = await loadSession();
+  const attendees = await loadLocalAttendees();
   
   const now = new Date();
   const pad = (n: number) => n.toString().padStart(2, "0");
@@ -1412,7 +1576,7 @@ async function performGoogleDriveBackup(isManual = false): Promise<BackupLog> {
 
   if (!session || !session.accessToken) {
     log.error = "Token Google Drive belum aktif atau sesi admin kadaluarsa. Hubungkan kembali akun Google Anda di pengaturan panel.";
-    recordBackupLog(log);
+    await recordBackupLog(log);
     return log;
   }
 
@@ -1465,23 +1629,23 @@ async function performGoogleDriveBackup(isManual = false): Promise<BackupLog> {
     log.error = err.message || "Kesalahan koneksi ke layanan awan Google Drive.";
   }
 
-  recordBackupLog(log);
+  await recordBackupLog(log);
   return log;
 }
 
-function recordBackupLog(log: BackupLog) {
-  const info = loadBackupHistory();
+async function recordBackupLog(log: BackupLog) {
+  const info = await loadBackupHistory();
   if (log.success) {
     info.lastBackupDate = log.date;
     info.lastBackupTime = log.timestamp;
   }
   info.history = [log, ...info.history].slice(0, 15);
-  saveBackupHistory(info);
+  await saveBackupHistory(info);
 }
 
 // Get Google Drive Backup settings and sync status
-app.get("/api/backup/status", (req, res) => {
-  res.json(loadBackupHistory());
+app.get("/api/backup/status", async (req, res) => {
+  res.json(await loadBackupHistory());
 });
 
 // Manually trigger Google Drive Backup
@@ -1511,7 +1675,7 @@ app.post("/api/upload-pdf-to-date-folder", async (req, res) => {
   }
 
   // Resolve accessToken and driveFolderId
-  const session = loadSession();
+  const session = await loadSession();
   const token = clientToken || session?.accessToken;
   const parentFolderId = clientFolderId || session?.driveFolderId;
 
@@ -1641,14 +1805,14 @@ app.post("/api/upload-pdf-to-date-folder", async (req, res) => {
 // ==========================================
 async function startServer() {
   // Start a periodic 30-minute interval for automatic daily backups
-  setInterval(() => {
+  setInterval(async () => {
     try {
-      const session = loadSession();
+      const session = await loadSession();
       if (session && session.accessToken) {
-        const historyInfo = loadBackupHistory();
+        const historyInfo = await loadBackupHistory();
         const nowObj = new Date();
         const nowStr = `${nowObj.getFullYear()}-${(nowObj.getMonth()+1).toString().padStart(2, "0")}-${nowObj.getDate().toString().padStart(2, "0")}`;
-        const attendees = loadLocalAttendees();
+        const attendees = await loadLocalAttendees();
         
         if (attendees.length > 0 && historyInfo.lastBackupDate !== nowStr) {
           console.log(`[Auto-Backup Timer] Running scheduled automatic daily backup to Google Drive...`);
