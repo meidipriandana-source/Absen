@@ -413,7 +413,7 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
   };
 
   // 2. Load Attendee list from local Express backend
-  const fetchAttendeesFromSheets = async (isBackground = false) => {
+  const fetchAttendeesFromSheets = async (isBackground = false, forceRefresh = false) => {
     if (isBackground) {
       setIsBackgroundFetching(true);
     } else {
@@ -424,7 +424,7 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
     let serverAttendees: Attendee[] = [];
 
     try {
-      const res = await fetch("/api/attendees");
+      const res = await fetch(`/api/attendees${forceRefresh ? "?force=true" : ""}`);
       const contentType = res.headers.get("content-type") || "";
       if (contentType.includes("application/json")) {
         if (res.ok) {
@@ -647,7 +647,7 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
     setIsSyncingManually(true);
     const toastId = showToast("Sinkronisasi real-time dengan Google Sheets...", "loading", 0);
     try {
-      await fetchAttendeesFromSheets();
+      await fetchAttendeesFromSheets(false, true);
       updateToast(toastId, { 
         message: "Data peserta berhasil diperbarui ke kondisi terbaru!", 
         type: "success" 

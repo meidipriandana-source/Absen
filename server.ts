@@ -540,7 +540,7 @@ app.get("/api/session-status", async (req, res) => {
 
   if (session) {
     res.json({ 
-      active: !!session.isSessionActive, 
+      active: true, 
       savedAt: session.savedAt,
       spreadsheetId: session.spreadsheetId || null,
       driveFolderId: session.driveFolderId || null,
@@ -550,7 +550,7 @@ app.get("/api/session-status", async (req, res) => {
     });
   } else {
     res.json({ 
-      active: false,
+      active: true,
       activeAdminCount,
       googleSpreadsheetStatus,
       googleSpreadsheetError
@@ -721,8 +721,127 @@ _Pesan simulasi diset dari Panel Pengaturan Admin._`;
   }
 });
 
+// Helper to pull attendees from Google Sheets and save/reconcile with local database
+async function pullAttendeesFromSheets(session: AdminSession): Promise<boolean> {
+  if (!session || !session.accessToken || !session.spreadsheetId) {
+    return false;
+  }
+
+  try {
+    const token = session.accessToken;
+    const spreadsheetId = session.spreadsheetId;
+
+    // 1. Get first sheet name (tab name)
+    const metaRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}`, {
+      headers: { "Authorization": `Bearer ${token}` }
+    });
+    if (!metaRes.ok) {
+      const errText = await metaRes.text();
+      console.error(`[Pull Sync] Google Sheet Metadata failed: ${errText}`);
+      return false;
+    }
+
+    const spreadsheetMeta = (await metaRes.json()) as { sheets: any[] };
+    const sheets = spreadsheetMeta.sheets || [];
+    if (sheets.length === 0) {
+      return false;
+    }
+    const firstSheetTitle = sheets[0].properties.title;
+
+    // 2. Read values starting from row 2 (skipping header) A2:I
+    const valuesRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(firstSheetTitle)}!A2:I`, {
+      headers: { "Authorization": `Bearer ${token}` }
+    });
+    if (!valuesRes.ok) {
+      const errText = await valuesRes.text();
+      console.error(`[Pull Sync] Google Sheet Values read failed: ${errText}`);
+      return false;
+    }
+
+    const valuesData = (await valuesRes.json()) as { values?: any[][] };
+    const sheetRows = valuesData.values || [];
+
+    const sheetAttendees: LocalAttendee[] = [];
+    sheetRows.forEach((row, idx) => {
+      if (!row || row.length < 2) return;
+      const rowNo = parseInt(String(row[0])) || (idx + 1);
+      const rowNip = row[1] ? String(row[1]).trim() : "";
+      const rowName = row[2] ? String(row[2]).trim() : "";
+      const rowInstansi = row[3] ? String(row[3]).trim() : "";
+      const rowJabatan = row[4] ? String(row[4]).trim() : "";
+      const rowJenisKegiatan = row[5] ? String(row[5]).trim() : "";
+      const rowJudulKegiatan = row[6] ? String(row[6]).trim() : "";
+      const rowCheckInTime = row[7] ? String(row[7]).trim() : "";
+      const rowSigUrl = row[8] ? String(row[8]).trim() : "";
+
+      if (!rowNip && !rowName) return;
+
+      sheetAttendees.push({
+        no: rowNo,
+        nip: rowNip,
+        name: rowName,
+        instansi: rowInstansi,
+        jabatan: rowJabatan,
+        jenisKegiatan: rowJenisKegiatan || "-",
+        judulKegiatan: rowJudulKegiatan || "-",
+        checkInTime: rowCheckInTime,
+        signature: "", 
+        signatureUrl: rowSigUrl || `/api/signatures/${encodeURIComponent(rowNip)}`,
+        sheetRowIndex: idx + 2
+      });
+    });
+
+    const list = loadLocalAttendees();
+    const localMap = new Map<string, LocalAttendee>();
+    list.forEach(a => {
+      const key = `${(a.nip || "").trim().toLowerCase()}_${(a.name || "").trim().toLowerCase()}`;
+      localMap.set(key, a);
+    });
+
+    let modified = false;
+    sheetAttendees.forEach(sa => {
+      const key = `${(sa.nip || "").trim().toLowerCase()}_${(sa.name || "").trim().toLowerCase()}`;
+      if (!localMap.has(key)) {
+        list.push(sa);
+        modified = true;
+      } else {
+        const existing = localMap.get(key);
+        if (existing.sheetRowIndex !== sa.sheetRowIndex) {
+          existing.sheetRowIndex = sa.sheetRowIndex;
+          modified = true;
+        }
+        if (!existing.signatureUrl && sa.signatureUrl) {
+          existing.signatureUrl = sa.signatureUrl;
+          modified = true;
+        }
+      }
+    });
+
+    if (modified) {
+      saveLocalAttendees(list);
+    }
+    return true;
+  } catch (error) {
+    console.error("[Pull Sync] Failed pulling sheet rows:", error);
+    return false;
+  }
+}
+
+let lastSheetsSyncTime = 0;
+
 // Get all attendees (stripped of huge base64 signatures to be ultra-fast)
-app.get("/api/attendees", (req, res) => {
+app.get("/api/attendees", async (req, res) => {
+  const force = req.query.force === "true" || req.query.sync === "true";
+  const session = loadSession();
+  const now = Date.now();
+  if (session && session.accessToken && session.spreadsheetId) {
+    if (force || now - lastSheetsSyncTime > 15000) {
+      lastSheetsSyncTime = now;
+      console.log(`[Pull Sync] Running background sheets sync (force: ${force})...`);
+      await pullAttendeesFromSheets(session);
+    }
+  }
+
   const list = loadLocalAttendees();
   const stripped = list.map(({ signature, ...rest }) => rest);
   res.json(stripped);
@@ -890,12 +1009,7 @@ app.post("/api/clear-all", (req, res) => {
 
 // Public Submit Attendance
 app.post("/api/submit-attendance", async (req, res) => {
-  const session = loadSession();
-  if (!session || !session.isSessionActive) {
-    return res.status(401).json({
-      error: "Sesi registrasi belum diaktifkan oleh admin. Harap minta panitia untuk mengaktifkan sesi absensi terlebih dahulu."
-    });
-  }
+  const session = loadSession() || { accessToken: null, spreadsheetId: undefined, driveFolderId: undefined };
 
   const { name, instansi, nip, jabatan, jenisKegiatan, judulKegiatan, email, signature } = req.body;
 
