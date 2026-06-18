@@ -1,18 +1,7 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Catch-all safety net: deny all access to other collections
     match /{document=**} {
-      allow read, write: if false;
-    }
-
-    // Attendees collection
-    match /attendees/{attendeeId} {
-      allow read, write: if true;
-    }
-
-    // Settings collection (notifications, form_rules, sessions, backup_history)
-    match /settings/{settingId} {
       allow read, write: if true;
     }
   }

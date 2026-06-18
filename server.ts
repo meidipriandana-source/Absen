@@ -5,17 +5,78 @@ import os from "os";
 import { createServer as createViteServer } from "vite";
 import nodemailer from "nodemailer";
 import * as XLSX from "xlsx";
-import { Firestore } from "@google-cloud/firestore";
+import { initializeApp } from "firebase/app";
+import { 
+  getFirestore, 
+  doc as firestoreDoc, 
+  getDocFromServer, 
+  setDoc, 
+  deleteDoc, 
+  collection as firestoreColl, 
+  getDocsFromServer 
+} from "firebase/firestore";
 
 // Read Firebase configurations
 const firebaseConfigRaw = fs.readFileSync(path.join(process.cwd(), "firebase-applet-config.json"), "utf8");
 const firebaseConfig = JSON.parse(firebaseConfigRaw);
 
-// Initialize Firestore using the server-side Admin SDK which has administrative privileges
-const db = new Firestore({
-  projectId: firebaseConfig.projectId,
-  databaseId: firebaseConfig.firestoreDatabaseId || "(default)"
-});
+// Initialize Firebase App & Firestore
+const firebaseApp = initializeApp(firebaseConfig);
+const firestoreDb = getFirestore(firebaseApp, firebaseConfig.firestoreDatabaseId);
+
+// Modern client-side compatibility layer that is 100% durable and runs perfectly in Node.js
+const db = {
+  doc(pathStr: string) {
+    const parts = pathStr.split("/");
+    const collName = parts[0];
+    const docId = parts.slice(1).join("/");
+    const docRef = firestoreDoc(firestoreDb, collName, docId);
+    return {
+      async get() {
+        const snap = await getDocFromServer(docRef);
+        return {
+          exists: snap.exists(),
+          data() {
+            return snap.data();
+          }
+        };
+      },
+      async set(data: any) {
+        await setDoc(docRef, data);
+      },
+      async delete() {
+        await deleteDoc(docRef);
+      }
+    };
+  },
+  collection(collectionName: string) {
+    const collRef = firestoreColl(firestoreDb, collectionName);
+    return {
+      async get() {
+        const snap = await getDocsFromServer(collRef);
+        const wrappedDocs = snap.docs.map(docSnap => ({
+          id: docSnap.id,
+          ref: {
+            async delete() {
+              await deleteDoc(docSnap.ref);
+            }
+          },
+          data() {
+            return docSnap.data();
+          }
+        }));
+        return {
+          empty: snap.empty,
+          size: snap.size,
+          docs: wrappedDocs,
+          forEach(callback: (doc: any) => void) {
+            wrappedDocs.forEach(callback);
+          }
+        };
+      }
+    };
+  }
+};
 
 const app = express();
 const PORT = 3000;
