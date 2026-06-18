@@ -5,81 +5,6 @@ import os from "os";
 import { createServer as createViteServer } from "vite";
 import nodemailer from "nodemailer";
 import * as XLSX from "xlsx";
-import { initializeApp } from "firebase/app";
-import { 
-  getFirestore, 
-  doc as firestoreDoc, 
-  getDocFromServer, 
-  setDoc, 
-  deleteDoc, 
-  collection as firestoreColl, 
-  getDocsFromServer 
-} from "firebase/firestore";
-
-// Read Firebase configurations
-const firebaseConfigRaw = fs.readFileSync(path.join(process.cwd(), "firebase-applet-config.json"), "utf8");
-const firebaseConfig = JSON.parse(firebaseConfigRaw);
-
-// Initialize Firebase App & Firestore
-const firebaseApp = initializeApp(firebaseConfig);
-const firestoreDb = getFirestore(firebaseApp, firebaseConfig.firestoreDatabaseId);
-
-// Modern client-side compatibility layer that is 100% durable and runs perfectly in Node.js
-const db = {
-  doc(pathStr: string) {
-    const parts = pathStr.split("/");
-    const collName = parts[0];
-    const docId = parts.slice(1).join("/");
-    const docRef = firestoreDoc(firestoreDb, collName, docId);
-    return {
-      async get() {
-        const snap = await getDocFromServer(docRef);
-        return {
-          exists: snap.exists(),
-          data() {
-            return snap.data();
-          }
-        };
-      },
-      async set(data: any) {
-        await setDoc(docRef, data);
-      },
-      async delete() {
-        await deleteDoc(docRef);
-      }
-    };
-  },
-  collection(collectionName: string) {
-    const collRef = firestoreColl(firestoreDb, collectionName);
-    return {
-      async get() {
-        const snap = await getDocsFromServer(collRef);
-        const wrappedDocs = snap.docs.map(docSnap => ({
-          id: docSnap.id,
-          ref: {
-            async delete() {
-              await deleteDoc(docSnap.ref);
-            }
-          },
-          data() {
-            return docSnap.data();
-          }
-        }));
-        return {
-          empty: snap.empty,
-          size: snap.size,
-          docs: wrappedDocs,
-          forEach(callback: (doc: any) => void) {
-            wrappedDocs.forEach(callback);
-          }
-        };
-      }
-    };
-  }
-};
-
-const app = express();
-const PORT = 3000;
 
 // Detect if running under serverless/read-only environment (writable path finder helper)
 function getWritablePath(filename: string): string {
@@ -94,6 +19,132 @@ function getWritablePath(filename: string): string {
     return path.join(os.tmpdir(), filename);
   }
 }
+
+// Local JSON file-based database adapter that replaces Firestore to simplify and prevent permission-denied/timeout issues
+const db = {
+  doc(pathStr: string) {
+    const parts = pathStr.split("/");
+    const collName = parts[0];
+    const docId = parts.slice(1).join("/");
+    
+    // We map settings/xxx and attendees/xxx paths to clean local paths in getWritablePath()
+    const filename = `${collName}_${docId.replace(/[\/.]/g, "_")}.json`;
+    const filePath = getWritablePath(filename);
+
+    return {
+      async get() {
+        if (collName === "attendees") {
+          const list = await loadLocalAttendees();
+          const match = list.find(a => {
+            const currentDocId = encodeURIComponent(`${(a.nip || "").trim()}_${(a.name || "").trim()}`.replace(/[\/.]/g, "_"));
+            return currentDocId === docId;
+          });
+          return {
+            exists: !!match,
+            data() { return match; }
+          };
+        }
+
+        try {
+          if (fs.existsSync(filePath)) {
+            const raw = fs.readFileSync(filePath, "utf-8");
+            const data = JSON.parse(raw);
+            return {
+              exists: true,
+              data() { return data; }
+            };
+          }
+        } catch (e) {}
+        
+        return {
+          exists: false,
+          data() { return null; }
+        };
+      },
+      async set(data: any) {
+        if (collName === "attendees") {
+          const list = await loadLocalAttendees();
+          const keyNip = (data.nip || "").trim().toLowerCase();
+          const keyName = (data.name || "").trim().toLowerCase();
+          const idx = list.findIndex(a => (a.nip || "").trim().toLowerCase() === keyNip && (a.name || "").trim().toLowerCase() === keyName);
+          if (idx !== -1) {
+            list[idx] = { ...list[idx], ...data };
+          } else {
+            list.push(data);
+          }
+          await saveLocalAttendees(list);
+          return;
+        }
+
+        try {
+          fs.writeFileSync(filePath, JSON.stringify(data, null, 2), "utf-8");
+        } catch (e) {
+          console.error(`Error saving settings ${pathStr}:`, e);
+        }
+      },
+      async delete() {
+        if (collName === "attendees") {
+          const list = await loadLocalAttendees();
+          const filtered = list.filter(a => {
+            const currentDocId = encodeURIComponent(`${(a.nip || "").trim()}_${(a.name || "").trim()}`.replace(/[\/.]/g, "_"));
+            return currentDocId !== docId;
+          });
+          await saveLocalAttendees(filtered);
+          return;
+        }
+
+        try {
+          if (fs.existsSync(filePath)) {
+            fs.unlinkSync(filePath);
+          }
+        } catch (e) {}
+      }
+    };
+  },
+  collection(collectionName: string) {
+    return {
+      async get() {
+        if (collectionName === "attendees") {
+          const list = await loadLocalAttendees();
+          const wrappedDocs = list.map(item => {
+            const docId = encodeURIComponent(`${(item.nip || "").trim()}_${(item.name || "").trim()}`.replace(/[\/.]/g, "_"));
+            return {
+              id: docId,
+              ref: {
+                async delete() {
+                  const refreshed = await loadLocalAttendees();
+                  const filtered = refreshed.filter(x => x.nip !== item.nip || x.name !== item.name);
+                  await saveLocalAttendees(filtered);
+                }
+              },
+              data() {
+                return item;
+              }
+            };
+          });
+          return {
+            empty: list.length === 0,
+            size: list.length,
+            docs: wrappedDocs,
+            forEach(callback: (doc: any) => void) {
+              wrappedDocs.forEach(callback);
+            }
+          };
+        }
+        
+        return {
+          empty: true,
+          size: 0,
+          docs: [],
+          forEach() {}
+        };
+      }
+    };
+  }
+};
+
+const app = express();
+const PORT = 3000;
 
 const SESSION_FILE = getWritablePath("admin_session.json");
 const NOTIFICATION_FILE = getWritablePath("notification_settings.json");
@@ -512,97 +563,26 @@ async function loadLocalAttendees(): Promise<LocalAttendee[]> {
     console.error("Error reading local attendees file:", err);
   }
 
-  // 2. Read from Firestore
-  let firestoreList: LocalAttendee[] = [];
-  try {
-    const snap = await db.collection("attendees").get();
-    if (!snap.empty) {
-      snap.forEach((docSnap) => {
-        const item = docSnap.data() as LocalAttendee;
-        if (item.jenisKegiatan === undefined) {
-          item.jenisKegiatan = item.email || "-";
-        }
-        if (item.judulKegiatan === undefined) {
-          item.judulKegiatan = "-";
-        }
-        firestoreList.push(item);
-      });
-    }
-  } catch (err) {
-    console.error("[Firestore] loadLocalAttendees fetch collection failed, reading only from disk cache:", err);
-  }
-
-  // 3. Bidirectional Reconciliation/Merge to ensure neither local nor remote is lost
-  const map = new Map<string, LocalAttendee>();
-
-  // A: Map remote first
-  firestoreList.forEach(item => {
-    const key = `${(item.nip || "").trim().toLowerCase()}_${(item.name || "").trim().toLowerCase()}`;
-    map.set(key, item);
-  });
-
-  // B: Merge local second (preserving newer signatures or offline registrations)
-  localList.forEach(item => {
-    const key = `${(item.nip || "").trim().toLowerCase()}_${(item.name || "").trim().toLowerCase()}`;
-    const existing = map.get(key);
-    if (!existing) {
-      map.set(key, item);
-    } else {
-      // Merge with precedence to keep the more complete entity
-      const merged = { ...existing, ...item };
-      // Preserve signatures and sheet indexes
-      if (!merged.signature && (existing.signature || item.signature)) {
-        merged.signature = existing.signature || item.signature;
-      }
-      if (!merged.sheetRowIndex && (existing.sheetRowIndex || item.sheetRowIndex)) {
-        merged.sheetRowIndex = existing.sheetRowIndex || item.sheetRowIndex;
-      }
-      map.set(key, merged);
-    }
-  });
-
-  const mergedList = Array.from(map.values());
-  // Sort ascending by enrollment number ('no')
-  mergedList.sort((a, b) => (a.no || 0) - (b.no || 0));
-
   // Fix indices ('no')
-  mergedList.forEach((item, index) => {
+  localList.forEach((item, index) => {
     item.no = index + 1;
   });
 
-  // 4. Save merged copy to local disk to keep cached stats up-to-date
-  try {
-    fs.writeFileSync(ATTENDEES_FILE, JSON.stringify(mergedList, null, 2), "utf-8");
-  } catch (e) {
-    console.error("Error writing reconciled attendees.json cache:", e);
-  }
-
-  return mergedList;
+  return localList;
 }
 
 // Helper to save local attendees with instant disk durability and asynchronous Firestore sync
 async function saveLocalAttendees(list: LocalAttendee[]) {
   // 1. Instantly save to disk so it's durable and safe
   try {
+    list.sort((a, b) => (a.no || 0) - (b.no || 0));
+    list.forEach((item, index) => {
+      item.no = index + 1;
+    });
     fs.writeFileSync(ATTENDEES_FILE, JSON.stringify(list, null, 2), "utf-8");
   } catch (err) {
     console.error("Error writing local attendees file:", err);
   }
-
-  // 2. Schedule Firestore sync in-background/asynchronously to make the HTTP api ultra fast and robust
-  setTimeout(async () => {
-    try {
-      const promises = list.map(async (a) => {
-        const docId = encodeURIComponent(`${(a.nip || "").trim()}_${(a.name || "").trim()}`.replace(/[\/.]/g, "_"));
-        const docRef = db.doc(`attendees/${docId}`);
-        return docRef.set(a);
-      });
-      await Promise.all(promises);
-      console.log(`[Firestore Background Sync] Successfully synchronized ${list.length} attendees.`);
-    } catch (err) {
-      console.error("[Firestore Background Sync] Failed to sync attendees to Firestore:", err);
-    }
-  }, 10);
 }
 
 // Helper to load admin session from file
@@ -620,7 +600,7 @@ async function loadSession(): Promise<AdminSession | null> {
       }
     }
   } catch (err) {
-    console.error("[Firestore] loadSession failed, falling back to disk cache:", err);
+    console.error("[LocalDB] loadSession failed, falling back to disk cache:", err);
   }
 
   try {
@@ -653,12 +633,12 @@ async function saveSession(accessToken: string | null, spreadsheetId?: string, d
     // Save locally
     try { fs.writeFileSync(SESSION_FILE, JSON.stringify(session, null, 2), "utf-8"); } catch (e) {}
     
-    // Save to Firestore
+    // Save to Local DB adapter
     const docRef = db.doc("settings/sessions");
     await docRef.set(session);
-    console.log("[Firestore] Save session success:", session);
+    console.log("[LocalDB] Save session success:", session);
   } catch (err) {
-    console.error("[Firestore] saveSession error:", err);
+    console.error("[LocalDB] saveSession error:", err);
   }
 }
 
