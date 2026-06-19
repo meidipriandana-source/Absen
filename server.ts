@@ -678,6 +678,7 @@ async function loadLocalAttendees(): Promise<LocalAttendee[]> {
 
   // If Firestore didn't return anything or failed, use local disk
   if (!loadedFromFirestore) {
+    let loadedFromDisk = false;
     try {
       if (fs.existsSync(ATTENDEES_FILE)) {
         const data = fs.readFileSync(ATTENDEES_FILE, "utf-8");
@@ -691,9 +692,18 @@ async function loadLocalAttendees(): Promise<LocalAttendee[]> {
           }
           return a as LocalAttendee;
         });
+        loadedFromDisk = true;
       }
     } catch (err) {
       console.error("Error reading local attendees file:", err);
+    }
+
+    // Since Firestore was empty but local disk had entries, sync local entries back to Firestore so they are never lost!
+    if (loadedFromDisk && list.length > 0 && firestoreDb) {
+      console.log(`[Firestore Dynamic Sync] Syncing ${list.length} local cached attendees back to persistent cloud database...`);
+      saveLocalAttendees(list).catch(err => {
+        console.error("[Firestore Dynamic Sync] Syncing list failed:", err);
+      });
     }
   }
 
