@@ -752,6 +752,18 @@ async function saveLocalAttendees(list: LocalAttendee[]) {
   }
 }
 
+function cleanSpreadsheetId(idOrUrl: string | undefined): string | undefined {
+  if (!idOrUrl) return idOrUrl;
+  const match = idOrUrl.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+  return match ? match[1] : idOrUrl.trim();
+}
+
+function cleanDriveFolderId(idOrUrl: string | undefined): string | undefined {
+  if (!idOrUrl) return idOrUrl;
+  const match = idOrUrl.match(/\/folders\/([a-zA-Z0-9-_]+)/);
+  return match ? match[1] : idOrUrl.trim();
+}
+
 // Helper to load admin session from file
 async function loadSession(): Promise<AdminSession | null> {
   try {
@@ -759,6 +771,8 @@ async function loadSession(): Promise<AdminSession | null> {
     const docSnap = await docRef.get();
     if (docSnap.exists) {
       const data = docSnap.data() as AdminSession;
+      if (data.spreadsheetId) data.spreadsheetId = cleanSpreadsheetId(data.spreadsheetId);
+      if (data.driveFolderId) data.driveFolderId = cleanDriveFolderId(data.driveFolderId);
       const expiry = data.accessToken ? 3 * 3600 * 1000 : 24 * 3600 * 1000;
       if (Date.now() - data.savedAt < expiry) {
         // Cache to local file
@@ -773,7 +787,9 @@ async function loadSession(): Promise<AdminSession | null> {
   try {
     if (fs.existsSync(SESSION_FILE)) {
       const data = fs.readFileSync(SESSION_FILE, "utf-8");
-      const parsed = JSON.parse(data);
+      const parsed = JSON.parse(data) as AdminSession;
+      if (parsed.spreadsheetId) parsed.spreadsheetId = cleanSpreadsheetId(parsed.spreadsheetId);
+      if (parsed.driveFolderId) parsed.driveFolderId = cleanDriveFolderId(parsed.driveFolderId);
       const expiry = parsed.accessToken ? 3 * 3600 * 1000 : 24 * 3600 * 1000;
       if (Date.now() - parsed.savedAt < expiry) {
         return parsed;
@@ -792,8 +808,8 @@ async function saveSession(accessToken: string | null, spreadsheetId?: string, d
     const session: AdminSession = {
       accessToken: accessToken !== undefined ? accessToken : (existing ? existing.accessToken : null),
       savedAt: Date.now(),
-      spreadsheetId: spreadsheetId || (existing ? existing.spreadsheetId : undefined),
-      driveFolderId: driveFolderId || (existing ? existing.driveFolderId : undefined),
+      spreadsheetId: cleanSpreadsheetId(spreadsheetId) || (existing ? existing.spreadsheetId : undefined),
+      driveFolderId: cleanDriveFolderId(driveFolderId) || (existing ? existing.driveFolderId : undefined),
       isSessionActive: isSessionActive !== undefined ? isSessionActive : (existing ? existing.isSessionActive : false),
       webAppUrl: webAppUrl !== undefined ? webAppUrl : (existing ? existing.webAppUrl : undefined)
     };

@@ -101,19 +101,9 @@ export default function App() {
     });
   };
 
-  const [isAdminLoggedIn, setIsAdminLoggedIn] = useState(() => {
-    if (typeof window !== "undefined") {
-      return localStorage.getItem("admin_local_logged_in") === "true";
-    }
-    return false;
-  });
+  const [isAdminLoggedIn, setIsAdminLoggedIn] = useState(true);
   const [adminUser, setAdminUser] = useState<FirebaseUser | null>(null);
-  const [adminToken, setAdminToken] = useState<string | null>(() => {
-    if (typeof window !== "undefined") {
-      return localStorage.getItem("admin_local_logged_in") === "true" ? "bypass" : null;
-    }
-    return null;
-  });
+  const [adminToken, setAdminToken] = useState<string | null>("bypass");
   const [isPublicSessionActive, setIsPublicSessionActive] = useState(false);
   const [localUsername, setLocalUsername] = useState("admin");
   const [localPassword, setLocalPassword] = useState("");
@@ -164,11 +154,10 @@ export default function App() {
         localStorage.removeItem("admin_local_logged_in"); // Prioritize real google active auth if done
       },
       () => {
-        // Only log out if not explicitly logged in via local bypass
-        if (localStorage.getItem("admin_local_logged_in") !== "true") {
-          setIsAdminLoggedIn(false);
-          setAdminUser(null);
-          setAdminToken(null);
+        // Continuous bypass mode
+        setIsAdminLoggedIn(true);
+        if (!adminToken) {
+          setAdminToken("bypass");
         }
       }
     );
@@ -268,22 +257,7 @@ export default function App() {
 
   // Handle Admin Log-Out
   const handleAdminLogout = async () => {
-    try {
-      await logout();
-    } catch (err) {
-      console.error("Logout error:", err);
-    }
-    localStorage.removeItem("admin_local_logged_in");
-    setIsAdminLoggedIn(false);
-    setAdminUser(null);
-    setAdminToken(null);
     setViewMode("form"); // Redirect back to form
-    checkPublicSession();
-
-    if (localStorage.getItem("admin_auto_logged_out_due_to_inactivity") === "true") {
-      setLoginError("Sesi Anda berakhir karena tidak ada aktivitas selama 15 menit untuk alasan keamanan. Silakan login kembali.");
-      localStorage.removeItem("admin_auto_logged_out_due_to_inactivity");
-    }
   };
 
   return (

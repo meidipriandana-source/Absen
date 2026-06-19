@@ -920,45 +920,10 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
     return () => clearInterval(interval);
   }, [isAutoRefreshEnabled, autoRefreshInterval]);
 
-  // 15-Minute Auto Logout Security Trigger based on inactivity
+  // 15-Minute Auto Logout Security Trigger based on inactivity (Bypassed)
   useEffect(() => {
-    let timeoutId: ReturnType<typeof setTimeout>;
-    let lastActivityTime = Date.now();
-
-    const resetTimer = () => {
-      if (timeoutId) clearTimeout(timeoutId);
-      // Modeled for exactly 15 minutes: 15 * 60 * 1000 = 900,000 ms
-      timeoutId = setTimeout(() => {
-        localStorage.setItem("admin_auto_logged_out_due_to_inactivity", "true");
-        onLogout();
-      }, 15 * 60 * 1000);
-    };
-
-    const handleUserActivity = () => {
-      const now = Date.now();
-      // Throttle event response to once every 2 seconds for high performance
-      if (now - lastActivityTime > 2000) {
-        lastActivityTime = now;
-        resetTimer();
-      }
-    };
-
-    const activityEvents = ["mousedown", "mousemove", "keypress", "scroll", "touchstart", "click"];
-
-    // Start initial timer
-    resetTimer();
-
-    // Register event listeners
-    activityEvents.forEach((event) => {
-      window.addEventListener(event, handleUserActivity);
-    });
-
-    return () => {
-      if (timeoutId) clearTimeout(timeoutId);
-      activityEvents.forEach((event) => {
-        window.removeEventListener(event, handleUserActivity);
-      });
-    };
+    // Inactivity logout disabled per user request
+    return () => {};
   }, [onLogout]);
 
   // Excel Export
@@ -1866,9 +1831,9 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
 
           <button
             onClick={onLogout}
-            className="bg-rose-500/10 backdrop-blur-md border border-rose-500/25 text-rose-300 hover:bg-rose-500/20 px-3.5 py-2.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 cursor-pointer ml-auto lg:ml-0 transition-all"
+            className="bg-indigo-500/10 backdrop-blur-md border border-indigo-500/25 text-indigo-300 hover:bg-indigo-500/20 px-3.5 py-2.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 cursor-pointer ml-auto lg:ml-0 transition-all"
           >
-            <LogOut className="w-3.5 h-3.5" /> Log Out
+            <LogOut className="w-3.5 h-3.5" /> Kembali Ke Form
           </button>
         </div>
       </div>
@@ -1995,6 +1960,26 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
             </div>
           ) : (
             <>
+              {accessToken === "bypass" && (
+                <div className="bg-amber-50 border border-amber-200/80 p-4 rounded-xl text-xs text-amber-900 leading-relaxed text-left flex flex-col md:flex-row items-start md:items-center justify-between gap-3 shadow-sm mb-4 col-span-1 md:col-span-2">
+                  <div className="space-y-1">
+                    <span className="font-bold text-amber-900 flex items-center gap-1.5">
+                      <Key className="w-4 h-4 text-amber-650 animate-pulse" /> Sesi Bypass Lokal (Belum Hubungkan Akun Google)
+                    </span>
+                    <p className="text-[11px] text-slate-600 leading-normal">
+                      Sistem berfungsi penuh dalam mode database lokal mandiri. Untuk mengotomatiskan Google Sheets/Drive & membuat file Spreadsheet baru secara real-time, silakan hubungkan akun Google Anda terlebih dahulu.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={onLogin}
+                    className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2.5 px-4.5 rounded-xl text-xs transition-all shrink-0 cursor-pointer flex items-center gap-1.5 shadow-md shadow-indigo-600/10 hover:scale-[1.02] active:scale-[0.98]"
+                  >
+                    Hubungkan Akun Google
+                  </button>
+                </div>
+              )}
+
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-1.5">
                   <label className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider block">ID Google Spreadsheet Utama</label>
@@ -2002,7 +1987,11 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
                     type="text"
                     value={spreadsheetId}
                     onChange={(e) => {
-                      const val = e.target.value.trim();
+                      let val = e.target.value.trim();
+                      const sheetMatch = val.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+                      if (sheetMatch) {
+                        val = sheetMatch[1];
+                      }
                       setSpreadsheetId(val);
                       localStorage.setItem("custom_spreadsheet_id", val);
                       fetch("/api/save-token", {
@@ -2015,7 +2004,7 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
                     placeholder="Masukkan ID Spreadsheet Anda"
                   />
                   <p className="text-[10px] text-slate-400 leading-normal">
-                    Google Spreadsheet tempat menyimpan data kehadiran. Anda bisa menyalinnya dari URL url sheets.
+                    Google Spreadsheet tempat menyimpan data kehadiran. Jika Anda menempelkan URL lengkap Spreadsheet, sistem akan otomatis mengekstrak ID-nya secara instan.
                   </p>
                 </div>
 
@@ -2025,7 +2014,11 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
                     type="text"
                     value={driveFolderId}
                     onChange={(e) => {
-                      const val = e.target.value.trim();
+                      let val = e.target.value.trim();
+                      const folderMatch = val.match(/\/folders\/([a-zA-Z0-9-_]+)/);
+                      if (folderMatch) {
+                        val = folderMatch[1];
+                      }
                       setDriveFolderId(val);
                       localStorage.setItem("custom_drive_folder_id", val);
                       fetch("/api/save-token", {
@@ -2038,7 +2031,7 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
                     placeholder="Masukkan ID Folder Drive Anda"
                   />
                   <p className="text-[10px] text-slate-400 leading-normal">
-                    Folder tempat menyimpan file gambar tanda tangan PNG peserta.
+                    Folder tempat menyimpan file gambar tanda tangan PNG peserta. Jika Anda menempelkan URL lengkap Folder, sistem akan otomatis mengekstrak ID-nya secara instan.
                   </p>
                 </div>
 
