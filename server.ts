@@ -5,6 +5,16 @@ import os from "os";
 import { createServer as createViteServer } from "vite";
 import nodemailer from "nodemailer";
 import * as XLSX from "xlsx";
+import { initializeApp } from "firebase/app";
+import { 
+  getFirestore, 
+  doc as fDoc, 
+  getDoc as fGetDoc, 
+  setDoc as fSetDoc, 
+  deleteDoc as fDeleteDoc, 
+  collection as fCollection, 
+  getDocs as fGetDocs 
+} from "firebase/firestore";
 
 // Detect if running under serverless/read-only environment (writable path finder helper)
 function getWritablePath(filename: string): string {
@@ -20,7 +30,19 @@ function getWritablePath(filename: string): string {
   }
 }
 
-// Local JSON file-based database adapter that replaces Firestore to simplify and prevent permission-denied/timeout issues
+// Initialize Server-side Firestore using Client/Web SDK (authenticating with API Key instead of Service Account IAM)
+let firestoreDb: any = null;
+try {
+  const firebaseConfigRaw = fs.readFileSync(path.join(process.cwd(), "firebase-applet-config.json"), "utf8");
+  const firebaseConfig = JSON.parse(firebaseConfigRaw);
+  const firebaseApp = initializeApp(firebaseConfig);
+  firestoreDb = getFirestore(firebaseApp, firebaseConfig.firestoreDatabaseId || "(default)");
+  console.log(`[Firestore Client API] Initialized successfully with database ID: ${firebaseConfig.firestoreDatabaseId}`);
+} catch (err) {
+  console.error("[Firestore Client API] Initialization failed, falling back to local storage only:", err);
+}
+
+// Resilient hybrid database adapter (Firestore primary, Local JSON file fallback)
 const db = {
   doc(pathStr: string) {
     const parts = pathStr.split("/");
@@ -33,18 +55,27 @@ const db = {
 
     return {
       async get() {
-        if (collName === "attendees") {
-          const list = await loadLocalAttendees();
-          const match = list.find(a => {
-            const currentDocId = encodeURIComponent(`${(a.nip || "").trim()}_${(a.name || "").trim()}`.replace(/[\/.]/g, "_"));
-            return currentDocId === docId;
-          });
-          return {
-            exists: !!match,
-            data() { return match; }
-          };
+        // Try Firestore first!
+        if (firestoreDb) {
+          try {
+            const docRef = fDoc(firestoreDb, pathStr);
+            const snap = await fGetDoc(docRef);
+            const exists = typeof snap.exists === "function" ? snap.exists() : snap.exists;
+            if (exists) {
+              const data = snap.data();
+              // Cache locally
+              try { fs.writeFileSync(filePath, JSON.stringify(data, null, 2), "utf-8"); } catch (e) {}
+              return {
+                exists: true,
+                data() { return data; }
+              };
+            }
+          } catch (err) {
+            console.error(`[Firestore GET Error] path: ${pathStr}, falling back to local disk cache:`, err);
+          }
         }
 
+        // Fallback to local cache files
         try {
           if (fs.existsSync(filePath)) {
             const raw = fs.readFileSync(filePath, "utf-8");
@@ -62,48 +93,87 @@ const db = {
         };
       },
       async set(data: any) {
-        if (collName === "attendees") {
-          const list = await loadLocalAttendees();
-          const keyNip = (data.nip || "").trim().toLowerCase();
-          const keyName = (data.name || "").trim().toLowerCase();
-          const idx = list.findIndex(a => (a.nip || "").trim().toLowerCase() === keyNip && (a.name || "").trim().toLowerCase() === keyName);
-          if (idx !== -1) {
-            list[idx] = { ...list[idx], ...data };
-          } else {
-            list.push(data);
-          }
-          await saveLocalAttendees(list);
-          return;
-        }
-
+        // Always save locally to ensure zero downtime
         try {
           fs.writeFileSync(filePath, JSON.stringify(data, null, 2), "utf-8");
         } catch (e) {
-          console.error(`Error saving settings ${pathStr}:`, e);
+          console.error(`Error saving settings cache ${pathStr}:`, e);
+        }
+
+        // Try Firestore
+        if (firestoreDb) {
+          try {
+            const docRef = fDoc(firestoreDb, pathStr);
+            await fSetDoc(docRef, data);
+          } catch (err) {
+            console.error(`[Firestore SET Error] path: ${pathStr}:`, err);
+          }
         }
       },
       async delete() {
-        if (collName === "attendees") {
-          const list = await loadLocalAttendees();
-          const filtered = list.filter(a => {
-            const currentDocId = encodeURIComponent(`${(a.nip || "").trim()}_${(a.name || "").trim()}`.replace(/[\/.]/g, "_"));
-            return currentDocId !== docId;
-          });
-          await saveLocalAttendees(filtered);
-          return;
-        }
-
+        // Delete locally
         try {
           if (fs.existsSync(filePath)) {
             fs.unlinkSync(filePath);
           }
         } catch (e) {}
+
+        // Try Firestore
+        if (firestoreDb) {
+          try {
+            const docRef = fDoc(firestoreDb, pathStr);
+            await fDeleteDoc(docRef);
+          } catch (err) {
+            console.error(`[Firestore DELETE Error] path: ${pathStr}:`, err);
+          }
+        }
       }
     };
   },
   collection(collectionName: string) {
     return {
       async get() {
+        // Try Firestore first
+        if (firestoreDb) {
+          try {
+            const collRef = fCollection(firestoreDb, collectionName);
+            const snap = await fGetDocs(collRef);
+            const wrappedDocs = snap.docs.map(docSnap => {
+              const item = docSnap.data();
+              // Write a localized copy on-the-fly to keep local cache files in-sync
+              const filename = `${collectionName}_${docSnap.id.replace(/[\/.]/g, "_")}.json`;
+              const filePath = getWritablePath(filename);
+              try { fs.writeFileSync(filePath, JSON.stringify(item, null, 2), "utf-8"); } catch (e) {}
+
+              return {
+                id: docSnap.id,
+                ref: {
+                  async delete() {
+                    try { await fDeleteDoc(docSnap.ref); } catch(e){}
+                    try { if (fs.existsSync(filePath)) fs.unlinkSync(filePath); } catch(e){}
+                  }
+                },
+                data() {
+                  return item;
+                }
+              };
+            });
+            const empty = typeof snap.empty === "function" ? (snap as any).empty() : snap.empty;
+            const size = typeof snap.size === "function" ? (snap as any).size() : snap.size;
+            return {
+              empty,
+              size,
+              docs: wrappedDocs,
+              forEach(callback: (doc: any) => void) {
+                wrappedDocs.forEach(callback);
+              }
+            };
+          } catch (err) {
+            console.error(`[Firestore Collection GET Error] collection: ${collectionName}, falling back to local files:`, err);
+          }
+        }
+
+        // Fallback or read-local-cache flow
         if (collectionName === "attendees") {
           const list = await loadLocalAttendees();
           const wrappedDocs = list.map(item => {
@@ -131,7 +201,43 @@ const db = {
             }
           };
         }
-        
+
+        // Otherwise scan the directory for settings_xx files
+        try {
+          const prefix = `${collectionName}_`;
+          const dir = process.cwd();
+          const files = fs.readdirSync(dir).filter(f => f.startsWith(prefix) && f.endsWith(".json"));
+          const wrappedDocs = files.map(file => {
+            const docId = file.substring(prefix.length, file.length - 5);
+            try {
+              const content = fs.readFileSync(path.join(dir, file), "utf-8");
+              const data = JSON.parse(content);
+              return {
+                id: docId,
+                ref: {
+                  async delete() {
+                     try { fs.unlinkSync(path.join(dir, file)); } catch(e){}
+                  }
+                },
+                data() { return data; }
+              };
+            } catch(e) {
+              return null;
+            }
+          }).filter(Boolean);
+
+          return {
+            empty: wrappedDocs.length === 0,
+            size: wrappedDocs.length,
+            docs: wrappedDocs,
+            forEach(callback: (doc: any) => void) {
+              wrappedDocs.forEach(callback);
+            }
+          };
+        } catch(e) {
+          console.error("Local Scan error:", e);
+        }
+
         return {
           empty: true,
           size: 0,
@@ -521,6 +627,7 @@ interface AdminSession {
   spreadsheetId?: string;
   driveFolderId?: string;
   isSessionActive?: boolean;
+  webAppUrl?: string;
 }
 
 const ATTENDEES_FILE = getWritablePath("attendees.json");
@@ -543,45 +650,95 @@ interface LocalAttendee {
 
 // Helper to load local attendees with bidirectional sync and deduplication so nothing is lost
 async function loadLocalAttendees(): Promise<LocalAttendee[]> {
-  // 1. Read from local disk file
-  let localList: LocalAttendee[] = [];
-  try {
-    if (fs.existsSync(ATTENDEES_FILE)) {
-      const data = fs.readFileSync(ATTENDEES_FILE, "utf-8");
-      const list = JSON.parse(data) as any[];
-      localList = list.map(a => {
-        if (a.jenisKegiatan === undefined) {
-          a.jenisKegiatan = a.email || "-";
-        }
-        if (a.judulKegiatan === undefined) {
-          a.judulKegiatan = "-";
-        }
-        return a as LocalAttendee;
-      });
+  let list: LocalAttendee[] = [];
+  let loadedFromFirestore = false;
+
+  // Try loading from Firestore first
+  if (firestoreDb) {
+    try {
+      const snap = await fGetDocs(fCollection(firestoreDb, "attendees"));
+      const empty = typeof snap.empty === "function" ? (snap as any).empty() : snap.empty;
+      if (!empty) {
+        snap.forEach(docSnap => {
+          const item = docSnap.data() as LocalAttendee;
+          if (item.jenisKegiatan === undefined) {
+            item.jenisKegiatan = item.email || "-";
+          }
+          if (item.judulKegiatan === undefined) {
+            item.judulKegiatan = "-";
+          }
+          list.push(item);
+        });
+        loadedFromFirestore = true;
+      }
+    } catch (err) {
+      console.error("[Firestore] loadLocalAttendees failed, using disk fallback:", err);
     }
-  } catch (err) {
-    console.error("Error reading local attendees file:", err);
   }
 
-  // Fix indices ('no')
-  localList.forEach((item, index) => {
+  // If Firestore didn't return anything or failed, use local disk
+  if (!loadedFromFirestore) {
+    try {
+      if (fs.existsSync(ATTENDEES_FILE)) {
+        const data = fs.readFileSync(ATTENDEES_FILE, "utf-8");
+        const rawList = JSON.parse(data) as any[];
+        list = rawList.map(a => {
+          if (a.jenisKegiatan === undefined) {
+            a.jenisKegiatan = a.email || "-";
+          }
+          if (a.judulKegiatan === undefined) {
+            a.judulKegiatan = "-";
+          }
+          return a as LocalAttendee;
+        });
+      }
+    } catch (err) {
+      console.error("Error reading local attendees file:", err);
+    }
+  }
+
+  // Ensure they are sorted by sequential no
+  list.sort((a, b) => (a.no || 0) - (b.no || 0));
+  list.forEach((item, index) => {
     item.no = index + 1;
   });
 
-  return localList;
+  // Always write back to disk to have a synchronized local cache copy
+  try {
+    fs.writeFileSync(ATTENDEES_FILE, JSON.stringify(list, null, 2), "utf-8");
+  } catch (e) {}
+
+  return list;
 }
 
 // Helper to save local attendees with instant disk durability and asynchronous Firestore sync
 async function saveLocalAttendees(list: LocalAttendee[]) {
-  // 1. Instantly save to disk so it's durable and safe
+  // Sort and fix sequential numbers list
+  list.sort((a, b) => (a.no || 0) - (b.no || 0));
+  list.forEach((item, index) => {
+    item.no = index + 1;
+  });
+
+  // 1. Save to local disk cache
   try {
-    list.sort((a, b) => (a.no || 0) - (b.no || 0));
-    list.forEach((item, index) => {
-      item.no = index + 1;
-    });
     fs.writeFileSync(ATTENDEES_FILE, JSON.stringify(list, null, 2), "utf-8");
   } catch (err) {
     console.error("Error writing local attendees file:", err);
+  }
+
+  // 2. Synchronize to Firestore documents
+  if (firestoreDb) {
+    try {
+      const promises = list.map(async (a) => {
+        const docId = encodeURIComponent(`${(a.nip || "").trim()}_${(a.name || "").trim()}`.replace(/[\/.]/g, "_"));
+        const docRef = fDoc(firestoreDb!, "attendees", docId);
+        await fSetDoc(docRef, a);
+      });
+      await Promise.all(promises);
+      console.log(`[Firestore Sync] Successfully synchronized ${list.length} attendees.`);
+    } catch (err) {
+      console.error("[Firestore Sync] Failed to sync attendees to Firestore:", err);
+    }
   }
 }
 
@@ -619,7 +776,7 @@ async function loadSession(): Promise<AdminSession | null> {
 }
 
 // Helper to save admin session to file
-async function saveSession(accessToken: string | null, spreadsheetId?: string, driveFolderId?: string, isSessionActive?: boolean) {
+async function saveSession(accessToken: string | null, spreadsheetId?: string, driveFolderId?: string, isSessionActive?: boolean, webAppUrl?: string) {
   try {
     const existing = await loadSession();
     const session: AdminSession = {
@@ -627,7 +784,8 @@ async function saveSession(accessToken: string | null, spreadsheetId?: string, d
       savedAt: Date.now(),
       spreadsheetId: spreadsheetId || (existing ? existing.spreadsheetId : undefined),
       driveFolderId: driveFolderId || (existing ? existing.driveFolderId : undefined),
-      isSessionActive: isSessionActive !== undefined ? isSessionActive : (existing ? existing.isSessionActive : false)
+      isSessionActive: isSessionActive !== undefined ? isSessionActive : (existing ? existing.isSessionActive : false),
+      webAppUrl: webAppUrl !== undefined ? webAppUrl : (existing ? existing.webAppUrl : undefined)
     };
     
     // Save locally
@@ -747,6 +905,7 @@ app.get("/api/session-status", async (req, res) => {
       savedAt: session.savedAt,
       spreadsheetId: session.spreadsheetId || null,
       driveFolderId: session.driveFolderId || null,
+      webAppUrl: session.webAppUrl || null,
       activeAdminCount,
       googleSpreadsheetStatus,
       googleSpreadsheetError
@@ -763,7 +922,7 @@ app.get("/api/session-status", async (req, res) => {
 
 // Admin saves token/settings for public check-ins
 app.post("/api/save-token", async (req, res) => {
-  const { accessToken, spreadsheetId, driveFolderId, isSessionActive } = req.body;
+  const { accessToken, spreadsheetId, driveFolderId, isSessionActive, webAppUrl } = req.body;
   const current = await loadSession();
   const wasActive = current ? !!current.isSessionActive : false;
   const nextActive = isSessionActive !== undefined ? !!isSessionActive : (current ? !!current.isSessionActive : true);
@@ -772,7 +931,8 @@ app.post("/api/save-token", async (req, res) => {
     accessToken !== undefined ? accessToken : (current ? current.accessToken : null),
     spreadsheetId || (current ? current.spreadsheetId : undefined),
     driveFolderId || (current ? current.driveFolderId : undefined),
-    nextActive
+    nextActive,
+    webAppUrl !== undefined ? webAppUrl : (current ? current.webAppUrl : undefined)
   );
 
   if (wasActive && !nextActive) {
@@ -1234,7 +1394,7 @@ app.post("/api/clear-all", async (req, res) => {
 // Public Submit Attendance
 app.post("/api/submit-attendance", async (req, res) => {
   const sessionDoc = await loadSession();
-  const session = sessionDoc || { accessToken: null, spreadsheetId: undefined, driveFolderId: undefined };
+  const session: AdminSession = sessionDoc || { accessToken: null, savedAt: Date.now() };
 
   const { name, instansi, nip, jabatan, jenisKegiatan, judulKegiatan, email, signature } = req.body;
 
@@ -1313,6 +1473,57 @@ app.post("/api/submit-attendance", async (req, res) => {
         // Do not fail the attendance! It is saved locally.
         // Recover signature URL to the local serve URL
         newAttendee.signatureUrl = localSigUrl;
+      }
+    }
+
+    // ALSO Sync using custom Google Apps Script Macro URL (as a primary or secondary robust dual-write endpoint)
+    const webAppUrl = session.webAppUrl || "https://script.google.com/macros/s/AKfycbzIGAemIIOWsesGX1sIhOLlbstRzToQZ9Vv5pat5C5igjsiwKB6DkfeZnPHV4I6Mzwp/exec";
+    if (webAppUrl) {
+      try {
+        console.log(`[Google Apps Script Macro Sync] Posting registration for ${name} to Web App: ${webAppUrl}`);
+        const parsedUrl = new URL(webAppUrl);
+        parsedUrl.searchParams.append("action", "register");
+        parsedUrl.searchParams.append("no", String(nextNo));
+        parsedUrl.searchParams.append("nip", nip);
+        parsedUrl.searchParams.append("name", name);
+        parsedUrl.searchParams.append("nama", name);
+        parsedUrl.searchParams.append("instansi", instansi);
+        parsedUrl.searchParams.append("jabatan", jabatan);
+        parsedUrl.searchParams.append("jenisKegiatan", resolvedJenisKegiatan);
+        parsedUrl.searchParams.append("judulKegiatan", resolvedJudulKegiatan);
+        parsedUrl.searchParams.append("checkInTime", checkInTime);
+        parsedUrl.searchParams.append("waktu", checkInTime);
+
+        const controller = new AbortController();
+        const tId = setTimeout(() => controller.abort(), 12000); // 12s timeout
+
+        const fetchRes = await fetch(parsedUrl.toString(), {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            action: "register",
+            no: nextNo,
+            nip,
+            name,
+            nama: name,
+            instansi,
+            jabatan,
+            jenisKegiatan: resolvedJenisKegiatan,
+            judulKegiatan: resolvedJudulKegiatan,
+            checkInTime,
+            waktu: checkInTime,
+            signature
+          }),
+          signal: controller.signal
+        });
+        clearTimeout(tId);
+
+        console.log(`[Google Apps Script Macro Sync] Response status: ${fetchRes.status}`);
+        googleSynced = true;
+      } catch (macroErr) {
+        console.error("[Google Apps Script Macro Sync] Sync failed:", macroErr);
       }
     }
 

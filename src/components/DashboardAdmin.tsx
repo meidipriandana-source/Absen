@@ -39,6 +39,9 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
   const [driveFolderId, setDriveFolderId] = useState<string>(() => {
     return localStorage.getItem("custom_drive_folder_id") || "1UseBW7ICFFT-cUPD1HC3KrJUhLCVgEgR";
   });
+  const [webAppUrl, setWebAppUrl] = useState<string>(() => {
+    return localStorage.getItem("custom_web_app_url") || "https://script.google.com/macros/s/AKfycbzIGAemIIOWsesGX1sIhOLlbstRzToQZ9Vv5pat5C5igjsiwKB6DkfeZnPHV4I6Mzwp/exec";
+  });
   const [dbStorageMode, setDbStorageMode] = useState<"sheets" | "local">(() => {
     const saved = localStorage.getItem("db_storage_mode");
     if (saved) return saved as "sheets" | "local";
@@ -397,6 +400,10 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
         setDriveFolderId(data.driveFolderId);
         localStorage.setItem("custom_drive_folder_id", data.driveFolderId);
       }
+      if (data.webAppUrl) {
+        setWebAppUrl(data.webAppUrl);
+        localStorage.setItem("custom_web_app_url", data.webAppUrl);
+      }
     } catch (err) {
       console.warn("Error fetching session status, falling back to local storage:", err);
       const offlineActive = localStorage.getItem("is_public_session_active") === "true";
@@ -408,6 +415,10 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
       const storedDriveFolderId = localStorage.getItem("custom_drive_folder_id");
       if (storedDriveFolderId) {
         setDriveFolderId(storedDriveFolderId);
+      }
+      const storedWebAppUrl = localStorage.getItem("custom_web_app_url");
+      if (storedWebAppUrl) {
+        setWebAppUrl(storedWebAppUrl);
       }
     }
   };
@@ -599,7 +610,8 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
               accessToken: accessToken === "bypass" ? null : accessToken,
               spreadsheetId,
               driveFolderId,
-              isSessionActive: true
+              isSessionActive: true,
+              webAppUrl
             }),
           });
           if (res.ok) {
@@ -1996,7 +2008,7 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
                       fetch("/api/save-token", {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ accessToken, spreadsheetId: val, driveFolderId })
+                        body: JSON.stringify({ accessToken, spreadsheetId: val, driveFolderId, webAppUrl })
                       });
                     }}
                     className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs focus:ring-1 focus:ring-emerald-500 outline-none text-slate-700 font-mono"
@@ -2019,7 +2031,7 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
                       fetch("/api/save-token", {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ accessToken, spreadsheetId, driveFolderId: val })
+                        body: JSON.stringify({ accessToken, spreadsheetId, driveFolderId: val, webAppUrl })
                       });
                     }}
                     className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs focus:ring-1 focus:ring-emerald-500 outline-none text-slate-700 font-mono"
@@ -2027,6 +2039,29 @@ export default function DashboardAdmin({ accessToken, onLogin, onLogout }: Dashb
                   />
                   <p className="text-[10px] text-slate-400 leading-normal">
                     Folder tempat menyimpan file gambar tanda tangan PNG peserta.
+                  </p>
+                </div>
+
+                <div className="md:col-span-2 space-y-1.5">
+                  <label className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider block">URL Google Web App (Macros Script)</label>
+                  <input
+                    type="text"
+                    value={webAppUrl}
+                    onChange={(e) => {
+                      const val = e.target.value.trim();
+                      setWebAppUrl(val);
+                      localStorage.setItem("custom_web_app_url", val);
+                      fetch("/api/save-token", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ accessToken, spreadsheetId, driveFolderId, webAppUrl: val })
+                      });
+                    }}
+                    className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs focus:ring-1 focus:ring-emerald-500 outline-none text-slate-700 font-mono"
+                    placeholder="Contoh: https://script.google.com/macros/s/.../exec"
+                  />
+                  <p className="text-[10px] text-slate-400 leading-normal">
+                    URL Google Apps Script Web App untuk sinkronisasi otomatis instan langsung tanpa repot melakukan OAuth.
                   </p>
                 </div>
               </div>
